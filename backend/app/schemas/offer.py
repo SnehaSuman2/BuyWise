@@ -30,6 +30,8 @@ class TrustSummary(BaseModel):
     score: int | None = None
     risk_level: str = "unknown"
     confidence_level: str = "low"
+    # verified | unverified | flagged — how much BuyWise actually knows about the seller.
+    verification: str = "unverified"
     is_demo: bool = False
 
 

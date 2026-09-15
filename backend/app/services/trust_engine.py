@@ -46,7 +46,11 @@ SOURCE_RELIABILITY = {
     "search_result": 0.5,
 }
 PRIOR_SCORE = 50.0
-PRIOR_WEIGHT = 0.2  # pseudo-evidence pulling towards neutral when data is thin
+# Pseudo-evidence pulling towards neutral. Set high enough that a thin or skewed
+# evidence pool cannot swing the score to an extreme — BuyWise should say "we don't
+# know" rather than assert a large, established retailer is high risk on the strength
+# of a handful of search hits.
+PRIOR_WEIGHT = 0.5
 SENTIMENT_SCALE = 65.0  # mean sentiment of +0.5 → ~80, -0.5 → ~20
 
 
@@ -224,19 +228,44 @@ def assess(evidence: list[AnalyzedEvidence], now: datetime | None = None) -> Tru
             }
         )
 
-    if confidence < 0.4:
+    # A score sitting on the neutral prior means the evidence did not discriminate —
+    # that is "we don't know", not "high risk". Reporting an established retailer as
+    # high risk because search hits netted out to neutral would be both wrong and
+    # unfair to a real business, which is exactly what BuyWise must not do.
+    uninformative = abs(score - PRIOR_SCORE) <= 6
+
+    # Calling a real business "high risk" is a serious, publishable accusation, so it
+    # requires corroboration rather than an aggregate dipping below a threshold. At
+    # least three independent, confident, high-severity negative items — and public
+    # search noise about any large retailer does not qualify, because leading queries
+    # are already discounted to low confidence upstream.
+    corroborated_negatives = sum(
+        1 for e in evidence if e.sentiment <= -0.5 and e.severity >= 0.6 and e.confidence >= 0.5
+    )
+    if confidence < 0.4 or uninformative:
         risk = "unknown"
     elif score >= 75:
         risk = "low"
     elif score >= 55:
         risk = "medium"
-    else:
+    elif corroborated_negatives >= 3:
         risk = "high"
+    else:
+        risk = "medium"
 
     if risk == "unknown":
-        explanation = "Insufficient evidence to confidently assess this retailer. The score below is provisional."
+        explanation = (
+            "Not enough discriminating evidence to rate this retailer yet. Public search "
+            "results about any large retailer skew negative, so BuyWise withholds a "
+            "verdict rather than inferring one."
+            if uninformative
+            else "Insufficient evidence to confidently assess this retailer. The score below is provisional."
+        )
     elif risk == "high":
-        explanation = "Higher risk based on available evidence. Review the concerns before buying."
+        explanation = (
+            f"Higher risk based on available evidence, including {corroborated_negatives} "
+            "corroborated reports of serious problems. Review the concerns before buying."
+        )
     elif risk == "medium":
         explanation = "Mixed evidence. Generally usable, but check the concerns listed."
     else:

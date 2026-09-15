@@ -134,6 +134,9 @@ POSITIVE = {
     "safe": 0.4,
 }
 # Domains whose content is primarily user complaints/reviews (higher relevance, moderate reliability)
+# Query terms that pre-select for negative results regardless of the retailer.
+LEADING_QUERY_RE = re.compile(r"\b(complaint|complaints|scam|fraud|refund|problem|issue|delay)\b", re.I)
+
 REVIEW_DOMAINS = {
     "consumercomplaints.in": 0.65,
     "mouthshut.com": 0.6,
@@ -247,15 +250,30 @@ def analyze_item(
     elif domain in NEWS_DOMAINS:
         confidence = 0.6
     if retailer_domain and (domain == retailer_domain or domain.endswith("." + retailer_domain)):
-        # Self-published pages: evidence of transparency, not of experience.
+        # A page on the retailer's own domain is not customer-experience evidence, whatever
+        # words it contains. A returns FAQ, a "Damaged and Defective Products" help page or
+        # a legally-required grievance contact are all the retailer *providing a remedy* —
+        # but they are dense with words the keyword scorer reads as negative ("complaints",
+        # "defective", "refund"), which was scoring Amazon's own help pages at -1.00 and
+        # dragging large, well-documented retailers below small unknown ones.
+        # Treat them uniformly as weak positive transparency signals instead.
+        topic = "transparency"
+        sentiment = 0.3
+        severity = 0.2
         confidence = 0.3
-        if topic in ("fraud", "authenticity"):
-            topic = "transparency"
-            sentiment = max(sentiment, 0.2)
-            severity = 0.2
     # A page merely echoing the query word ("Is X a scam?") with no strong signal is weak evidence.
     if sentiment == 0.0:
         confidence = min(confidence, 0.3)
+
+    # Selection bias: four of the six evidence queries ("complaints", "refund", "scam",
+    # "delivery") actively hunt for negative content, so they return negative results for
+    # any brand that exists. Treating that harvest as a discovery scored Amazon.in and
+    # Flipkart at ~29/100 "high risk" purely for being large enough to have complaint
+    # pages. Evidence surfaced by a leading query is heavily discounted: it can still
+    # contribute when the signal is strong and the source is a real complaint platform,
+    # but it cannot by itself drive the score.
+    if item.query and LEADING_QUERY_RE.search(item.query) and sentiment < 0:
+        confidence *= 0.35
     claim = re.sub(r"\s+", " ", (item.snippet or item.title or "")).strip()[:220]
     return AnalyzedEvidence(
         source=item.source,

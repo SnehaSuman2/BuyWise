@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.models import Offer, Product, TrustScore
+from app.models import Offer, Product
 from app.providers import registry
 from app.schemas.common import DataMeta
 from app.schemas.offer import (
@@ -26,7 +26,7 @@ from app.services.affiliate_service import go_url_for
 from app.services.market_filter import filter_to_market
 from app.services.price_engine import compute_true_price, true_price_from_listing
 from app.services.product_matcher import Candidate, MatchResult, MatchType, match_products
-from app.services.trust_service import TrustService
+from app.services.trust_service import FLAGGED, TrustService, verification_status
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +117,19 @@ class OfferService:
                 warnings.append("Live offer refresh failed; showing last known offers.")
         trust_map = await self.trust.trust_summaries({o.retailer_id for o in offers})
         responses = [self._offer_response(o, trust_map.get(o.retailer_id)) for o in offers]
+
+        # A merchant assessed with enough confidence and found to be high risk is
+        # withheld entirely — showing it with a warning would still put a cheap,
+        # untrustworthy price at the top of the comparison.
+        flagged = [r for r in responses if r.trust.verification == FLAGGED]
+        if flagged:
+            responses = [r for r in responses if r.trust.verification != FLAGGED]
+            names = sorted({r.retailer.name for r in flagged})
+            warnings.append(
+                f"Hid {len(flagged)} offer(s) from merchants BuyWise assessed as high "
+                f"risk ({', '.join(names[:3])})."
+            )
+
         exact = [r for r in responses if r.match.match_type == MatchType.EXACT.value]
         picks = self.rank(exact)
         is_demo = bool(offers) and all(o.is_demo for o in offers)
@@ -138,7 +151,10 @@ class OfferService:
             ),
         )
 
-    def _offer_response(self, o: Offer, trust: TrustScore | None) -> OfferResponse:
+    def _offer_response(
+        self, o: Offer, trust_entry: tuple | None
+    ) -> OfferResponse:
+        retailer, trust = trust_entry if trust_entry else (None, None)
         tp = compute_true_price(
             float(o.listed_price),
             original_price=float(o.original_price) if o.original_price else None,
@@ -175,6 +191,7 @@ class OfferService:
                 score=trust.overall_score if trust else None,
                 risk_level=trust.risk_level if trust else "unknown",
                 confidence_level=trust.confidence_level if trust else "low",
+                verification=verification_status(retailer, trust),
                 is_demo=trust.is_demo if trust else False,
             ),
             source_provider=o.source_provider,

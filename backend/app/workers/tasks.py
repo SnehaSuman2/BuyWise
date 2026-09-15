@@ -24,3 +24,8 @@ def refresh_trust():
 @celery_app.task(name="app.workers.tasks.cleanup")
 def cleanup():
     return asyncio.run(run_job_standalone("cleanup"))
+
+
+@celery_app.task(name="app.workers.tasks.assess_new_retailers")
+def assess_new_retailers():
+    return asyncio.run(run_job_standalone("assess_new_retailers"))

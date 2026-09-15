@@ -104,10 +104,40 @@ async def cleanup(db: AsyncSession) -> dict:
     }
 
 
+async def assess_new_retailers(db: AsyncSession, limit: int = 10) -> dict:
+    """Gather trust evidence for merchants that appeared in results but were never
+    assessed, so they can graduate from "unverified" to a real score — or be flagged.
+
+    This is what lets a small Indian retailer earn its way into results on evidence
+    rather than by paying for placement. Bounded per run because each retailer costs
+    several SerpApi calls.
+    """
+    service = TrustService(db)
+    pending = await service.retailers_needing_assessment(limit=limit)
+    assessed, flagged, failed = 0, 0, 0
+    for retailer in pending:
+        try:
+            score = await service.ensure_retailer_score(retailer, refresh=True)
+            assessed += 1
+            if score.risk_level == "high" and score.confidence_level in ("medium", "high"):
+                flagged += 1
+                logger.info(
+                    "Merchant flagged as high risk: %s (score=%s, confidence=%s)",
+                    retailer.name,
+                    score.overall_score,
+                    score.confidence_level,
+                )
+        except Exception as exc:
+            failed += 1
+            logger.warning("Trust assessment failed for %s: %s", retailer.slug, type(exc).__name__)
+    return {"pending": len(pending), "assessed": assessed, "flagged": flagged, "failed": failed}
+
+
 JOBS = {
     "refresh_prices": refresh_prices,
     "check_alerts": check_alerts,
     "refresh_trust": refresh_trust,
+    "assess_new_retailers": assess_new_retailers,
     "cleanup": cleanup,
 }
 

@@ -28,6 +28,10 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.tasks.check_alerts",
         "schedule": crontab(minute="*/30"),
     },
+    "assess-new-retailers": {
+        "task": "app.workers.tasks.assess_new_retailers",
+        "schedule": crontab(minute="*/20"),
+    },
     "refresh-trust": {
         "task": "app.workers.tasks.refresh_trust",
         "schedule": crontab(minute="0", hour="3"),

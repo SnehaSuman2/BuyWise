@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { ShieldCheck, ExternalLink, ChevronDown, ChevronUp, Info, Store } from "lucide-react";
+import VerificationBadge from "@/components/trust/VerificationBadge";
 import { formatPrice, getTrustColor, matchBadgeClass, formatRelativeTime } from "@/lib/utils";
 import type { OfferComparison, Offer } from "@/lib/types";
 
@@ -59,6 +60,7 @@ export default function OffersTable({ comparison }: { comparison: OfferCompariso
                       <div className="min-w-0">
                         <Link href={`/retailer/${o.retailer.id}`} className="font-medium hover:text-indigo-500">{o.retailer.name}</Link>
                         {o.seller && o.seller.name !== o.retailer.name && <div className="text-xs text-muted-foreground truncate">Sold by {o.seller.name}</div>}
+                        <VerificationBadge verification={o.trust.verification} className="mt-0.5" />
                         <div className="flex gap-1 mt-0.5">
                           {o.id === bestId && <span className="text-[10px] font-semibold text-indigo-500">BEST OVERALL</span>}
                           {o.id === cheapestId && o.id !== bestId && <span className="text-[10px] font-semibold text-emerald-500">CHEAPEST</span>}
@@ -78,7 +80,11 @@ export default function OffersTable({ comparison }: { comparison: OfferCompariso
                     {!o.price.final_price_known && <div className="text-[10px] text-amber-600">may vary at checkout</div>}
                   </td>
                   <td className="py-3 px-4 text-center hidden md:table-cell">
-                    <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-bold ${getTrustColor(o.trust.score)}`}><ShieldCheck className="w-3 h-3" />{typeof o.trust.score === "number" ? o.trust.score : "—"}</span>
+                    {typeof o.trust.score === "number" ? (
+                      <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-bold ${getTrustColor(o.trust.score)}`}><ShieldCheck className="w-3 h-3" />{o.trust.score}</span>
+                    ) : (
+                      <span className="text-xs text-muted-foreground" title="Not assessed yet — BuyWise is gathering evidence about this seller.">Not rated</span>
+                    )}
                   </td>
                   <td className="py-3 px-4 text-center hidden lg:table-cell">
                     <span className={`inline-block px-2 py-0.5 rounded-md border text-[11px] font-medium ${matchBadgeClass(o.match.match_type)}`} title={o.match.reasons.join("; ")}>{o.match.label} · {Math.round(o.match.confidence * 100)}%</span>
@@ -97,7 +103,7 @@ export default function OffersTable({ comparison }: { comparison: OfferCompariso
           })}
         </tbody>
       </table>
-      <p className="px-4 py-3 text-xs text-muted-foreground">Sorted by estimated final price. Only exact matches are used for picks; variants and similar products are shown for context. Prices can differ by pincode and change at checkout.</p>
+      <p className="px-4 py-3 text-xs text-muted-foreground">Sorted by estimated final price. Only exact matches are used for picks; variants and similar products are shown for context. Prices can differ by pincode and change at checkout. Sellers marked <strong>Unverified</strong> have not been assessed yet — BuyWise gathers evidence on them in the background, and merchants it assesses as high risk are withheld entirely. Sellers are never able to pay for inclusion or a better score.</p>
     </div>
   );
 }

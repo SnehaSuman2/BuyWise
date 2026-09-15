@@ -119,6 +119,8 @@ export interface TrustSummary {
   score?: number | null;
   risk_level: string;
   confidence_level: string;
+  /** verified | unverified | flagged — how much BuyWise knows about this seller. */
+  verification: "verified" | "unverified" | "flagged";
   is_demo: boolean;
 }
 

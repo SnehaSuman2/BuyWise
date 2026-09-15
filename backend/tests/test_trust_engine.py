@@ -53,8 +53,10 @@ def test_positive_evidence_low_risk_with_explanation():
         ev("payment_security", 0.4),
     ]
     a = assess(items)
-    assert a.score is not None and a.score >= 75
-    assert a.risk_level == "low"
+    # Eight positive items is decent but not overwhelming: a usable verdict,
+    # without claiming certainty.
+    assert a.score is not None and a.score >= 65
+    assert a.risk_level in ("low", "medium")
     assert a.factors and all("label" in f and f["examples"] for f in a.factors)
     assert a.confidence_level in ("medium", "high")
 
@@ -108,12 +110,10 @@ def test_evidence_analyzer_search_result_negative():
         query="X refund",
     )
     a = analyze_item(item, "r1", "x.com")
-    assert (
-        a.topic in ("returns", "fraud")
-        and a.sentiment < 0
-        and a.severity > 0.5
-        and a.confidence >= 0.6
-    )
+    assert a.topic in ("returns", "fraud") and a.sentiment < 0 and a.severity > 0.5
+    # Surfaced by a leading query ("X refund"), so confidence is discounted — the
+    # query selected for this result rather than discovering it.
+    assert a.confidence < 0.3
 
 
 def test_evidence_analyzer_self_published_is_weak():
@@ -144,3 +144,44 @@ def test_trust_engine_is_independent_of_commercial_modules():
                 assert not any(
                     bad in m for bad in ("affiliate", "billing", "subscription", "payments")
                 ), f"{name} imports {m}"
+
+
+def test_leading_queries_cannot_manufacture_a_bad_verdict():
+    """Searching "<retailer> scam" returns scam pages for any brand that exists. That
+    harvest is a selection artefact, not a discovery, and must be discounted — it had
+    been scoring Amazon.in and Flipkart at ~29/100 "high risk" purely for being large."""
+    identical = dict(
+        source="google_search",
+        source_type="search_result",
+        url="https://www.consumercomplaints.in/x",
+        title="Terrible experience",
+        snippet="worst service, cheated, refund never received",
+    )
+    discovered = analyze_item(EvidenceItem(**identical, query="SomeShop reviews"), "r1", "someshop.com")
+    selected = analyze_item(EvidenceItem(**identical, query="SomeShop complaints"), "r1", "someshop.com")
+    assert selected.confidence < discovered.confidence
+
+
+def test_retailer_own_help_pages_are_not_negative_evidence():
+    """A returns FAQ or grievance contact on the retailer's own domain is the retailer
+    providing a remedy, but it is dense with words the keyword scorer reads as negative."""
+    a = analyze_item(
+        EvidenceItem(
+            source="google_search",
+            source_type="search_result",
+            url="https://www.amazon.in/gp/help/customer/display.html",
+            title="Damaged and Defective Products - FAQ. Replacements and Refunds",
+            snippet="Returns, replacements and refunds for damaged or defective products",
+            query="amazon.in refund",
+        ),
+        "r1",
+        "amazon.in",
+    )
+    assert a.sentiment > 0 and a.topic == "transparency"
+
+
+def test_uninformative_evidence_reports_unknown_not_high_risk():
+    """A score sitting on the neutral prior means we learned nothing. Calling that
+    "high risk" about a real business would be wrong and unfair."""
+    a = assess([ev("delivery", -0.3, confidence=0.5), ev("returns", 0.3, confidence=0.5)])
+    assert a.risk_level == "unknown"

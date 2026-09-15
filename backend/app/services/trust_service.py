@@ -29,6 +29,33 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+VERIFIED = "verified"
+UNVERIFIED = "unverified"
+FLAGGED = "flagged"
+
+
+def verification_status(retailer: Retailer | None, score: TrustScore | None) -> str:
+    """How much BuyWise actually knows about this merchant.
+
+    verified   — a curated retailer, or assessed with enough evidence to stand behind
+    flagged    — assessed with enough confidence, and the evidence is bad
+    unverified — not assessed yet, or too little evidence to say anything
+
+    "unverified" is shown to the shopper rather than hidden: a small Indian retailer
+    should be able to earn its way in on evidence, not by paying for placement.
+    """
+    if retailer is not None and retailer.is_curated:
+        return VERIFIED
+    if score is None or score.overall_score is None:
+        return UNVERIFIED
+    confident = score.confidence_level in ("medium", "high")
+    if not confident:
+        return UNVERIFIED
+    if score.risk_level == "high":
+        return FLAGGED
+    return VERIFIED
+
+
 def _to_analyzed(row: TrustEvidence) -> AnalyzedEvidence:
     return AnalyzedEvidence(
         source=row.source,
@@ -314,15 +341,103 @@ class TrustService:
         )
         return self._response(score, seller.name, "seller", [])
 
-    async def trust_summaries(self, retailer_ids: set[uuid.UUID]) -> dict[uuid.UUID, TrustScore]:
-        out: dict[uuid.UUID, TrustScore] = {}
+    async def trust_summaries(
+        self, retailer_ids: set[uuid.UUID]
+    ) -> dict[uuid.UUID, tuple[Retailer, TrustScore | None]]:
+        """Return the trust score already on record for each retailer, if any.
+
+        Deliberately does NOT gather evidence: doing that inline meant a search touching
+        eight unknown merchants fired 48 SerpApi calls and took ~90s. Unassessed
+        retailers come back with no score and surface as "unverified"; the
+        assess_new_retailers background job fills them in.
+        """
+        out: dict[uuid.UUID, tuple[Retailer, TrustScore | None]] = {}
         for rid in retailer_ids:
             retailer = (
                 await self.db.execute(select(Retailer).where(Retailer.id == rid))
             ).scalar_one_or_none()
             if retailer:
-                out[rid] = await self.ensure_retailer_score(retailer)
+                score = await self._latest_score(retailer_id=retailer.id)
+                if score is None and retailer.is_curated:
+                    score = await self.ensure_baseline_score(retailer)
+                out[rid] = (retailer, score)
         return out
+
+    async def ensure_baseline_score(self, retailer: Retailer) -> TrustScore | None:
+        """Score a curated retailer from locally-known evidence, with no network calls.
+
+        Curated retailers carry published policy facts (returns window, buyer
+        protection, COD, grievance contact) in the registry, which is enough for a
+        baseline score. This keeps SAFEST working on a product's first view without
+        firing SerpApi calls for every merchant. Web evidence is layered on later by
+        the assess_new_retailers job.
+        """
+        existing = await self._latest_score(retailer_id=retailer.id)
+        if existing is not None:
+            return existing
+        if not retailer.is_curated:
+            return None
+
+        stored = set(
+            (
+                await self.db.execute(
+                    select(TrustEvidence.fingerprint).where(
+                        TrustEvidence.retailer_id == retailer.id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for policy in trust_engine.policy_evidence(retailer.name, retailer.policies or {}):
+            item = EvidenceItem(
+                source="retailer_policy",
+                source_type="policy",
+                url=policy.get("url"),
+                title=f"{retailer.name} published policy",
+                snippet=policy["claim"],
+                topic=policy["topic"],
+                sentiment=policy["sentiment"],
+                severity=policy["severity"],
+                confidence=policy["confidence"],
+                extracted_claim=policy["claim"],
+            )
+            analysed = analyze_item(item, f"retailer:{retailer.id}", retailer.domain)
+            if analysed.fingerprint in stored:
+                continue
+            stored.add(analysed.fingerprint)
+            self.db.add(
+                TrustEvidence(
+                    retailer_id=retailer.id,
+                    source=analysed.source,
+                    source_type=analysed.source_type,
+                    url=analysed.url,
+                    title=(analysed.title or "")[:500] or None,
+                    snippet=analysed.snippet,
+                    published_at=analysed.published_at,
+                    topic=analysed.topic,
+                    sentiment=analysed.sentiment,
+                    severity=analysed.severity,
+                    confidence=analysed.confidence,
+                    extracted_claim=analysed.extracted_claim,
+                    fingerprint=analysed.fingerprint,
+                    collected_at=_now(),
+                    is_demo=analysed.is_demo,
+                )
+            )
+        await self.db.flush()
+        return await self.compute_and_store(retailer)
+
+    async def retailers_needing_assessment(self, limit: int = 10) -> list[Retailer]:
+        """Retailers with no trust score yet, oldest first. Used by the background job."""
+        scored = select(TrustScore.retailer_id).where(TrustScore.retailer_id.is_not(None))
+        rows = await self.db.execute(
+            select(Retailer)
+            .where(Retailer.id.not_in(scored))
+            .order_by(Retailer.created_at.asc())
+            .limit(limit)
+        )
+        return list(rows.scalars().all())
 
     def _response(
         self, score: TrustScore, name: str, subject_type: str, evidence: list[TrustEvidence]
