@@ -4,8 +4,11 @@ The models use dialect-portable column types so the same schema runs on
 PostgreSQL (production) and SQLite (local development and tests).
 """
 
+import ssl
 from collections.abc import AsyncGenerator
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
+import certifi
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -19,6 +22,21 @@ from sqlalchemy.pool import StaticPool
 from app.core.config import get_settings
 
 settings = get_settings()
+
+
+def _strip_libpq_only_query_params(url: str) -> tuple[str, bool]:
+    """asyncpg does not understand libpq-style query params (sslmode, channel_binding) —
+    it errors with "unexpected keyword argument" if they reach its connect() call. Strip
+    them and translate the SSL intent into asyncpg's own `ssl` connect arg instead.
+    Returns (cleaned_url, want_ssl).
+    """
+    parsed = urlparse(url)
+    params = parse_qs(parsed.query)
+    sslmode = (params.pop("sslmode", [None])[0] or "").lower()
+    params.pop("channel_binding", None)
+    want_ssl = sslmode in ("require", "verify-ca", "verify-full", "prefer", "allow")
+    cleaned = urlunparse(parsed._replace(query=urlencode(params, doseq=True)))
+    return cleaned, want_ssl
 
 
 def _build_engine(url: str) -> AsyncEngine:
@@ -35,6 +53,20 @@ def _build_engine(url: str) -> AsyncEngine:
             cursor.close()
 
         return engine
+    connect_args: dict = {}
+    if "asyncpg" in url:
+        # Disable asyncpg's prepared-statement cache: PgBouncer in transaction-pooling
+        # mode (used by Neon/Supabase pooled connection strings) does not support
+        # prepared statements shared across pooled connections, which otherwise
+        # surfaces as random "prepared statement already exists" errors under load.
+        connect_args["statement_cache_size"] = 0
+        url, want_ssl = _strip_libpq_only_query_params(url)
+        if want_ssl:
+            # Use certifi's CA bundle explicitly rather than the OS default: some Python
+            # installs (notably python.org's macOS build) don't wire up a usable system
+            # trust store, which otherwise fails with "unable to get local issuer
+            # certificate" even though the server's certificate is perfectly valid.
+            connect_args["ssl"] = ssl.create_default_context(cafile=certifi.where())
     return create_async_engine(
         url,
         echo=settings.DEBUG,
@@ -42,6 +74,7 @@ def _build_engine(url: str) -> AsyncEngine:
         max_overflow=10,
         pool_pre_ping=True,
         pool_recycle=1800,
+        connect_args=connect_args,
     )
 
 

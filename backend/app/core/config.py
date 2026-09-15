@@ -10,6 +10,7 @@ Only settings that are *explicitly* meant for the browser live in the frontend
 
 from __future__ import annotations
 
+import os
 import secrets
 from functools import lru_cache
 from pathlib import Path
@@ -20,6 +21,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
 _ROOT_DIR = _BACKEND_DIR.parent
+
+# In tests, never read a developer's real .env file — a real secret sitting there
+# (e.g. a live EMAIL_API_KEY) would otherwise make "demo mode" tests call real APIs.
+# conftest.py sets ENVIRONMENT=test in the process environment before this module
+# is first imported, so this check is reliable.
+_ENV_FILES = () if os.environ.get("ENVIRONMENT") == "test" else (str(_ROOT_DIR / ".env"), str(_BACKEND_DIR / ".env"))
 
 _INSECURE_SECRETS = {
     "",
@@ -35,7 +42,9 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(
         # Root .env first, backend/.env overrides. Neither file is committed.
-        env_file=(str(_ROOT_DIR / ".env"), str(_BACKEND_DIR / ".env")),
+        # Empty in tests (see _ENV_FILES above) so tests are hermetic regardless
+        # of what real secrets exist in a developer's local .env.
+        env_file=_ENV_FILES,
         env_file_encoding="utf-8",
         case_sensitive=True,
         extra="ignore",
@@ -226,11 +235,15 @@ class Settings(BaseSettings):
     def sync_database_url(self) -> str:
         """Sync driver URL for Alembic and Celery workers."""
         url = self.DIRECT_DATABASE_URL or self.DATABASE_URL
-        return (
-            url.replace("postgresql+asyncpg://", "postgresql+psycopg://")
-            .replace("postgres://", "postgresql+psycopg://")
-            .replace("sqlite+aiosqlite://", "sqlite://")
-        )
+        if url.startswith("postgresql+asyncpg://"):
+            return url.replace("postgresql+asyncpg://", "postgresql+psycopg://", 1)
+        if url.startswith("postgres://"):
+            return url.replace("postgres://", "postgresql+psycopg://", 1)
+        if url.startswith("postgresql://"):
+            return url.replace("postgresql://", "postgresql+psycopg://", 1)
+        if url.startswith("sqlite+aiosqlite://"):
+            return url.replace("sqlite+aiosqlite://", "sqlite://", 1)
+        return url
 
     @property
     def async_database_url(self) -> str:

@@ -52,3 +52,5 @@ Thumbs.db
 dist/
 build/
 coverage/
+.friend_token_temp.txt
+.render_secret_key_temp.txt

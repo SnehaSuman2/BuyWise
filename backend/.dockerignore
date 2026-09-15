@@ -1,0 +1,16 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+buywise.db
+buywise.db-*
+uploads/*
+!uploads/.gitkeep
+.env
+.env.*
+!.env.example
+.git/
+.DS_Store

@@ -9,6 +9,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.data.retailers import resolve_retailer, slugify
@@ -128,49 +129,66 @@ async def upsert_product(
     identifiers = clean_identifiers(identifiers)
     attrs = attrs or extract_attributes(title, specifications, brand)
     key = canonical_key(attrs, identifiers)
-    result = await db.execute(select(Product).where(Product.canonical_key == key))
-    product = result.scalar_one_or_none()
+
+    async def _find_existing() -> Product | None:
+        result = await db.execute(select(Product).where(Product.canonical_key == key))
+        found = result.scalar_one_or_none()
+        if found is None:
+            found = await find_product_by_identifiers(db, identifiers)
+        return found
+
+    product = await _find_existing()
+    created = False
     if product is None:
-        product = await find_product_by_identifiers(db, identifiers)
-    if product is None:
-        product = Product(
-            name=title[:500],
-            brand=(brand or (attrs.brand.title() if attrs.brand else None)),
-            model=attrs.model,
-            category=category,
-            description=description,
-            gtin=identifiers.get("gtin"),
-            sku=identifiers.get("sku"),
-            mpn=identifiers.get("mpn"),
-            asin=identifiers.get("asin"),
-            attributes=attrs.as_dict(),
-            specifications=specifications or {},
-            images=[image_url] if image_url else [],
-            normalized_name=attrs.clean_title[:500],
-            canonical_key=key,
-            source_provider=source_provider,
-            source_url=source_url,
-            is_demo=is_demo,
-        )
-        db.add(product)
-        await db.flush()
-        variant = ProductVariant(
-            product_id=product.id,
-            name=title[:500],
-            storage=attrs.storage,
-            ram=attrs.ram,
-            color=attrs.color,
-            size=attrs.size,
-            gtin=identifiers.get("gtin"),
-            asin=identifiers.get("asin"),
-            mpn=identifiers.get("mpn"),
-            sku=identifiers.get("sku"),
-            canonical_key=f"v:{key}",
-            additional_specs={},
-        )
-        db.add(variant)
-        await db.flush()
-    else:
+        # Two concurrent requests (e.g. a duplicate double-fetch, or two users searching
+        # the same brand-new product at once) can race to insert the same canonical_key.
+        # Insert inside a SAVEPOINT so a unique-constraint conflict only rolls back this
+        # attempt rather than the whole request, then fall back to whichever row won.
+        try:
+            async with db.begin_nested():
+                product = Product(
+                    name=title[:500],
+                    brand=(brand or (attrs.brand.title() if attrs.brand else None)),
+                    model=attrs.model,
+                    category=category,
+                    description=description,
+                    gtin=identifiers.get("gtin"),
+                    sku=identifiers.get("sku"),
+                    mpn=identifiers.get("mpn"),
+                    asin=identifiers.get("asin"),
+                    attributes=attrs.as_dict(),
+                    specifications=specifications or {},
+                    images=[image_url] if image_url else [],
+                    normalized_name=attrs.clean_title[:500],
+                    canonical_key=key,
+                    source_provider=source_provider,
+                    source_url=source_url,
+                    is_demo=is_demo,
+                )
+                db.add(product)
+                await db.flush()
+                variant = ProductVariant(
+                    product_id=product.id,
+                    name=title[:500],
+                    storage=attrs.storage,
+                    ram=attrs.ram,
+                    color=attrs.color,
+                    size=attrs.size,
+                    gtin=identifiers.get("gtin"),
+                    asin=identifiers.get("asin"),
+                    mpn=identifiers.get("mpn"),
+                    sku=identifiers.get("sku"),
+                    canonical_key=f"v:{key}",
+                    additional_specs={},
+                )
+                db.add(variant)
+                await db.flush()
+            created = True
+        except IntegrityError:
+            product = await _find_existing()
+            if product is None:
+                raise  # conflict was on something else entirely — a real error
+    if not created:
         # enrich missing fields without overwriting known data
         if image_url and not product.images:
             product.images = [image_url]
