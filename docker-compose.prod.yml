@@ -1,0 +1,20 @@
+# Production overrides: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+services:
+  backend:
+    volumes: []
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2 --proxy-headers --forwarded-allow-ips='*'"
+  celery-worker:
+    volumes: []
+  celery-beat:
+    volumes: []
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: runner
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+        NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL}
+        NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-}
+    volumes: []
+    command: ["node", "server.js"]

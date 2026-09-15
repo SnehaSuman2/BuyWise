@@ -1,0 +1,54 @@
+# --- Secrets & environment (never commit) ---
+.env
+.env.*
+!.env.example
+*.env
+**/.env
+**/.env.*
+!**/.env.example
+*.pem
+*.key
+secrets/
+
+# --- Dependencies ---
+node_modules/
+**/node_modules/
+
+# --- Next.js ---
+frontend/.next/
+.next/
+frontend/out/
+frontend/.vercel
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+backend/.venv/
+backend/venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# --- Local databases & uploads ---
+*.db
+*.sqlite
+*.sqlite3
+backend/buywise.db*
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# --- Logs & builds ---
+*.log
+dist/
+build/
+coverage/

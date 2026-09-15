@@ -1,0 +1,121 @@
+"use client";
+
+import { useSearchParams, useRouter } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
+import Link from "next/link";
+import { Star, Search, Link2, AlertTriangle } from "lucide-react";
+import { api, ApiError } from "@/lib/api";
+import { formatPrice, matchBadgeClass } from "@/lib/utils";
+import DataBadge from "@/components/ui/DataBadge";
+import Spinner from "@/components/ui/Spinner";
+import ErrorBox from "@/components/ui/ErrorBox";
+import type { ProductSearchResult, SearchResponse } from "@/lib/types";
+
+function ProductCard({ product }: { product: ProductSearchResult }) {
+  return (
+    <Link href={`/product/${product.id}`} className="glass rounded-2xl overflow-hidden hover:shadow-xl hover:-translate-y-1 transition-all duration-300 group flex flex-col">
+      <div className="aspect-square bg-muted/30 relative overflow-hidden">
+                <img src={product.image || "https://placehold.co/400x400/1a1a2e/e0e0e0?text=No+image"} alt={product.name} loading="lazy" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+        {product.offer_count > 0 && <div className="absolute top-3 right-3 px-2 py-1 rounded-lg bg-indigo-500 text-white text-xs font-medium">{product.offer_count} offer{product.offer_count === 1 ? "" : "s"}</div>}
+        {product.is_demo && <div className="absolute top-3 left-3 px-2 py-0.5 rounded-md bg-amber-500 text-white text-[10px] font-bold uppercase">Demo</div>}
+      </div>
+      <div className="p-4 flex flex-col flex-1">
+        <div className="text-xs text-indigo-500 font-medium mb-1">{[product.brand, product.category].filter(Boolean).join(" · ")}</div>
+        <h3 className="font-semibold text-sm leading-snug mb-2 line-clamp-2 group-hover:text-indigo-500 transition-colors">{product.name}</h3>
+        {product.match && <span className={`self-start mb-2 px-2 py-0.5 rounded-md border text-[11px] font-medium ${matchBadgeClass(product.match.match_type)}`}>{product.match.label} · {Math.round(product.match.confidence * 100)}%</span>}
+        <div className="flex items-end justify-between mt-auto">
+          <div>
+            <div className="text-lg font-bold">{product.lowest_price ? formatPrice(product.lowest_price) : "No price"}</div>
+            {product.highest_price && product.lowest_price && product.highest_price > product.lowest_price && <div className="text-xs text-muted-foreground">up to {formatPrice(product.highest_price)}</div>}
+          </div>
+          {product.average_rating ? <div className="flex items-center gap-1 text-sm text-amber-500"><Star className="w-4 h-4 fill-current" />{product.average_rating}</div> : null}
+        </div>
+        {product.retailers.length > 0 && <div className="text-[11px] text-muted-foreground mt-2 truncate">{product.retailers.join(", ")}</div>}
+      </div>
+    </Link>
+  );
+}
+
+const SORTS: { key: string; label: string }[] = [{ key: "relevance", label: "Relevance" }, { key: "price_asc", label: "Price: low" }, { key: "price_desc", label: "Price: high" }, { key: "rating", label: "Rating" }];
+
+function SearchContent() {
+  const params = useSearchParams();
+  const router = useRouter();
+  const q = params.get("q") || "";
+  const sort = params.get("sort") || "relevance";
+  const [data, setData] = useState<SearchResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [input, setInput] = useState(q);
+  const [prevQ, setPrevQ] = useState(q);
+  if (prevQ !== q) { setPrevQ(q); setInput(q); }
+  const isUrl = /^https?:\/\//i.test(q);
+  const shown = q ? data : null;
+
+  useEffect(() => {
+    if (!q) return;
+    let cancelled = false;
+    (async () => {
+      setLoading(true); setError(null);
+      try {
+        const res = await api.search(isUrl ? { url: q, sort_by: sort, page_size: 24 } : { query: q, sort_by: sort, page_size: 24 });
+        if (!cancelled) setData(res);
+      } catch (e) {
+        if (!cancelled) setError((e as ApiError).message);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [q, sort, isUrl]);
+
+  const submit = (e: React.FormEvent) => { e.preventDefault(); if (input.trim()) router.push(`/search?q=${encodeURIComponent(input.trim())}`); };
+
+  return (
+    <div className="max-w-7xl mx-auto px-4 py-8">
+      <form onSubmit={submit} className="glass rounded-2xl p-2 flex items-center gap-2 mb-6 max-w-2xl" role="search">
+        <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-muted/50">{/^https?:\/\//i.test(input) ? <Link2 className="w-5 h-5 text-indigo-500" /> : <Search className="w-5 h-5 text-muted-foreground" />}</div>
+        <input value={input} onChange={(e) => setInput(e.target.value)} placeholder="Search products or paste a retailer URL" className="flex-1 min-w-0 bg-transparent outline-none" aria-label="Search" />
+        <button type="submit" className="px-4 py-2 rounded-xl gradient-primary text-white text-sm font-medium">Search</button>
+      </form>
+
+      <div className="mb-6 flex flex-wrap items-center gap-3">
+        <h1 className="text-2xl font-bold">{q ? (isUrl ? "Matches for your link" : <>Results for &quot;{q}&quot;</>) : "Search"}</h1>
+        {shown && <DataBadge meta={shown.meta} />}
+      </div>
+      {shown?.query_type === "url" && (
+        <p className="text-sm text-muted-foreground mb-4">Detected retailer: <strong>{shown.detected_retailer || "unknown"}</strong> · identified as &quot;{shown.query}&quot;. Each result shows how confidently it matches the product in your link.</p>
+      )}
+      {shown?.meta.warnings.map((w) => <p key={w} className="text-sm text-amber-600 flex items-center gap-2 mb-2"><AlertTriangle className="w-4 h-4" />{w}</p>)}
+
+      {q && (
+        <div className="flex items-center gap-2 mb-6 flex-wrap">
+          {SORTS.map((s) => <button key={s.key} onClick={() => router.push(`/search?q=${encodeURIComponent(q)}&sort=${s.key}`)} className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${sort === s.key ? "bg-indigo-500/10 text-indigo-500" : "bg-muted/50 hover:bg-muted"}`}>{s.label}</button>)}
+          {shown && <span className="text-sm text-muted-foreground ml-auto">{shown.total_results} product{shown.total_results === 1 ? "" : "s"}</span>}
+        </div>
+      )}
+
+      {loading && <Spinner label="Searching retailers…" className="py-10 justify-center" />}
+      {error && <ErrorBox message={error} />}
+      {!loading && !error && shown && shown.results.length === 0 && (
+        <div className="text-center py-20"><p className="text-lg text-muted-foreground">No products found for &quot;{q}&quot;</p><p className="text-sm text-muted-foreground mt-2">Try a more specific product name, model number or a retailer URL.</p></div>
+      )}
+      {!loading && shown && shown.results.length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+          {shown.results.map((product, i) => (
+            <div key={product.id} className="animate-slide-up" style={{ animationDelay: `${Math.min(i, 12) * 0.04}s`, opacity: 0, animationFillMode: "forwards" }}><ProductCard product={product} /></div>
+          ))}
+        </div>
+      )}
+      {!q && <p className="text-muted-foreground text-sm">Type a product name or paste a link from Amazon, Flipkart, Croma and other Indian retailers.</p>}
+    </div>
+  );
+}
+
+export default function SearchPage() {
+  return (
+    <Suspense fallback={<div className="max-w-7xl mx-auto px-4 py-8"><div className="animate-shimmer h-96 rounded-2xl" /></div>}>
+      <SearchContent />
+    </Suspense>
+  );
+}

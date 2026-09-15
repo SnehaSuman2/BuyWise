@@ -1,0 +1,457 @@
+"""Search orchestration: text / URL / image → normalized listings → grouped products → persisted.
+
+Routing (minimum API calls):
+  text  : Google Shopping (→ Bing Shopping fallback) ; Amazon Search only if fewer than 3 results
+  url   : detect retailer → Amazon Product (ASIN) or slug-derived query → Google Shopping
+  image : Google Lens → grouped listings
+"""
+
+from __future__ import annotations
+
+import base64
+import logging
+import re
+import time
+import uuid
+from dataclasses import dataclass, field
+from urllib.parse import urlparse
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import get_settings
+from app.core.http import UnsafeURLError, validate_public_http_url
+from app.data.retailers import resolve_retailer
+from app.models import Product, Search
+from app.providers import registry
+from app.providers.base import NormalizedListing, ProviderResult
+from app.providers.serpapi.common import extract_asin
+from app.schemas.common import DataMeta
+from app.schemas.product import MatchInfo, ProductSearchResult
+from app.schemas.search import SearchRequest, SearchResponse
+from app.services import catalog
+from app.services.price_engine import true_price_from_listing
+from app.services.product_matcher import Candidate, MatchResult, MatchType, match_products
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ListingGroup:
+    reference: Candidate
+    listings: list[tuple[NormalizedListing, MatchResult]] = field(default_factory=list)
+    product: Product | None = None
+    reference_match: MatchResult | None = None  # vs an external reference (URL/image)
+
+    @property
+    def title(self) -> str:
+        return self.reference.title
+
+
+def group_listings(
+    listings: list[NormalizedListing], min_confidence: float = 0.75
+) -> list[ListingGroup]:
+    """Cluster listings into products using the matcher (exact matches join a group)."""
+    groups: list[ListingGroup] = []
+    for listing in listings:
+        cand = Candidate(
+            listing.title, catalog.clean_identifiers(listing.identifiers), listing.brand
+        )
+        if cand.attrs.is_accessory and not any(
+            w in (listing.title.lower()) for w in ("case", "cover", "protector", "charger", "cable")
+        ):
+            cand.attrs.is_accessory = False
+        best: tuple[ListingGroup, MatchResult] | None = None
+        for group in groups:
+            res = match_products(group.reference, cand)
+            if res.match_type == MatchType.EXACT and res.confidence >= min_confidence:
+                if best is None or res.confidence > best[1].confidence:
+                    best = (group, res)
+        if best:
+            group, res = best
+            group.listings.append((listing, res))
+            # prefer a reference that carries hard identifiers
+            if not group.reference.identifiers and cand.identifiers:
+                group.reference = cand
+        else:
+            groups.append(
+                ListingGroup(
+                    reference=cand,
+                    listings=[(listing, MatchResult(MatchType.EXACT, 1.0, ["Reference listing"]))],
+                )
+            )
+    return groups
+
+
+def query_from_url(url: str) -> str:
+    """Derive a search query from a retailer product URL slug."""
+    parsed = urlparse(url)
+    segments = [s for s in parsed.path.split("/") if s]
+    candidates = [
+        s for s in segments if len(s) > 12 and "-" in s and not re.fullmatch(r"[A-Za-z0-9]{10,}", s)
+    ]
+    slug = max(candidates, key=len) if candidates else (segments[0] if segments else "")
+    slug = re.sub(
+        r"\b(p|dp|product|itm[a-z0-9]+|buy|online)\b",
+        " ",
+        slug.replace("-", " ").replace("_", " "),
+        flags=re.I,
+    )
+    return re.sub(r"\s+", " ", slug).strip()[:120]
+
+
+class SearchService:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self.settings = get_settings()
+
+    # ------------------------------------------------------------ public
+    async def search(
+        self, request: SearchRequest, user_id: uuid.UUID | None = None
+    ) -> SearchResponse:
+        started = time.perf_counter()
+        warnings: list[str] = []
+        providers_used: list[str] = []
+        cached = False
+        detected_retailer = None
+        reference: Candidate | None = None
+        reference_product_id: str | None = None
+
+        if request.url:
+            query_type = "url"
+            try:
+                url = validate_public_http_url(request.url)
+            except UnsafeURLError as exc:
+                raise ValueError(str(exc)) from exc
+            listings, reference, detected_retailer, ref_product, meta = await self._search_by_url(
+                url
+            )
+            providers_used += meta["providers"]
+            warnings += meta["warnings"]
+            cached = meta["cached"]
+            if ref_product is not None:
+                reference_product_id = str(ref_product.id)
+            query_text = reference.title if reference else url
+        elif request.image_url or request.image_base64:
+            query_type = "image"
+            image_url = request.image_url
+            if not image_url and request.image_base64:
+                image_url = await self._store_uploaded_image(request.image_base64)
+                if image_url is None:
+                    warnings.append(
+                        "Image uploads need a publicly reachable API_PUBLIC_URL for Google Lens; using demo results."
+                    )
+            listings, meta = await self._search_by_image(image_url or "")
+            providers_used += meta["providers"]
+            warnings += meta["warnings"]
+            cached = meta["cached"]
+            query_text = "image search"
+        else:
+            query_type = "text"
+            query_text = (request.query or "").strip()
+            if not query_text:
+                raise ValueError("Provide a query, url or image")
+            listings, meta = await self._search_text(
+                query_text, request.min_price, request.max_price
+            )
+            providers_used += meta["providers"]
+            warnings += meta["warnings"]
+            cached = meta["cached"]
+
+        groups = group_listings(listings)
+        if reference is not None:
+            for g in groups:
+                g.reference_match = match_products(reference, g.reference)
+            groups.sort(
+                key=lambda g: (
+                    -(g.reference_match.match_type == MatchType.EXACT),
+                    -g.reference_match.confidence,
+                )
+            )
+
+        results = await self._persist_groups(groups, query_type)
+        # If the URL flow produced a reference product not represented in results, put it first.
+        if reference_product_id and all(str(r.id) != reference_product_id for r in results):
+            ref = await catalog.load_product(self.db, uuid.UUID(reference_product_id))
+            if ref:
+                results.insert(0, await self._result_for_product(ref, None))
+
+        results = self._sort(results, request.sort_by)
+        total = len(results)
+        start = (request.page - 1) * request.page_size
+        page_results = results[start : start + request.page_size]
+        is_demo = any(l.is_demo for l in listings) if listings else self.settings.demo_mode
+        data_mode = (
+            "demo"
+            if is_demo and all(l.is_demo for l in listings)
+            else ("mixed" if is_demo else "live")
+        )
+
+        self.db.add(
+            Search(
+                user_id=user_id,
+                query_text=query_text[:1000],
+                query_type=query_type,
+                query_url=request.url,
+                results_count=total,
+                filters={"min_price": request.min_price, "max_price": request.max_price},
+                data_mode=data_mode,
+                providers_used=providers_used,
+                cache_hit=cached,
+                duration_ms=int((time.perf_counter() - started) * 1000),
+            )
+        )
+        return SearchResponse(
+            query=query_text,
+            query_type=query_type,
+            detected_retailer=detected_retailer,
+            reference_product_id=reference_product_id,
+            total_results=total,
+            page=request.page,
+            page_size=request.page_size,
+            results=page_results,
+            meta=DataMeta(
+                data_mode=data_mode,
+                is_demo=is_demo,
+                providers=sorted(set(providers_used)),
+                cached=cached,
+                warnings=warnings,
+            ),
+        )
+
+    # ------------------------------------------------------------ routing
+    async def _search_text(
+        self, query: str, min_price, max_price
+    ) -> tuple[list[NormalizedListing], dict]:
+        providers_used, warnings, listings, cached = [], [], [], False
+        for provider in registry.product_search_providers():
+            res = await provider.search_products(
+                query, max_results=40, min_price=min_price, max_price=max_price
+            )
+            providers_used.append(f"{provider.name}:{provider.engine}")
+            cached = cached or res.cached
+            if not res.ok:
+                warnings.append(f"{provider.engine} temporarily unavailable.")
+                continue
+            listings.extend(res.items)
+            if len(listings) >= 5:
+                break
+        if len(listings) < 3:
+            for provider in registry.retailer_search_providers():
+                res = await provider.search_retailer(query, max_results=10)
+                providers_used.append(f"{provider.name}:{provider.engine}")
+                cached = cached or res.cached
+                if res.ok:
+                    listings.extend(res.items)
+                else:
+                    warnings.append("Amazon data temporarily unavailable.")
+        return [l for l in listings if l.price], {
+            "providers": providers_used,
+            "warnings": warnings,
+            "cached": cached,
+        }
+
+    async def _search_by_url(self, url: str):
+        providers_used, warnings, listings, cached = [], [], [], False
+        parsed = urlparse(url)
+        curated = resolve_retailer(None, parsed.hostname)
+        detected = curated["name"] if curated else (parsed.hostname or None)
+        reference: Candidate | None = None
+        ref_product: Product | None = None
+        asin = extract_asin(url) if curated and curated["slug"] == "amazon-india" else None
+
+        if asin:
+            provider = registry.amazon_product_provider()
+            res = await provider.get_product_details(asin)
+            providers_used.append(f"{provider.name}:{provider.engine}")
+            cached = res.cached
+            if res.ok and res.items:
+                details = res.items[0]
+                reference = Candidate(
+                    details.title,
+                    catalog.clean_identifiers(details.identifiers),
+                    details.brand,
+                    details.specifications,
+                )
+                ref_product = await catalog.upsert_product(
+                    self.db,
+                    details.title,
+                    attrs=reference.attrs,
+                    identifiers=details.identifiers,
+                    brand=details.brand,
+                    category=details.category,
+                    image_url=details.images[0] if details.images else None,
+                    description=details.description,
+                    specifications=details.specifications,
+                    source_provider=details.source_provider,
+                    source_url=details.source_url,
+                    is_demo=details.is_demo,
+                )
+                variant = await catalog.primary_variant(self.db, ref_product)
+                for offer in details.offers:
+                    tp = true_price_from_listing(offer)
+                    if tp:
+                        await catalog.record_offer(
+                            self.db,
+                            ref_product,
+                            offer,
+                            tp,
+                            MatchResult(MatchType.EXACT, 0.98, ["Product page listing (ASIN)"]),
+                            variant=variant,
+                        )
+                listings.extend(details.offers)
+            else:
+                warnings.append(
+                    "Amazon product details unavailable; searching by URL text instead."
+                )
+        if reference is None:
+            query = query_from_url(url)
+            if not query:
+                raise ValueError("Could not extract a product from that URL")
+            reference = Candidate(query)
+        text_listings, meta = await self._search_text(reference.title, None, None)
+        listings.extend(text_listings)
+        providers_used += meta["providers"]
+        warnings += meta["warnings"]
+        cached = cached or meta["cached"]
+        return (
+            listings,
+            reference,
+            detected,
+            ref_product,
+            {"providers": providers_used, "warnings": warnings, "cached": cached},
+        )
+
+    async def _search_by_image(self, image_url: str) -> tuple[list[NormalizedListing], dict]:
+        providers_used, warnings, listings, cached = [], [], [], False
+        for provider in registry.image_search_providers():
+            res: ProviderResult = await provider.search_by_image(image_url)
+            providers_used.append(f"{provider.name}:{provider.engine}")
+            cached = cached or res.cached
+            if not res.ok:
+                warnings.append("Image search temporarily unavailable.")
+                continue
+            listings.extend(res.items)
+            if listings:
+                break
+        priced = [l for l in listings if l.price]
+        if listings and not priced:
+            # Lens matches often lack prices: run a text search using the best-matching title.
+            text_listings, meta = await self._search_text(listings[0].title, None, None)
+            providers_used += meta["providers"]
+            warnings += meta["warnings"]
+            priced = text_listings
+        return priced, {"providers": providers_used, "warnings": warnings, "cached": cached}
+
+    async def _store_uploaded_image(self, image_base64: str) -> str | None:
+        """Persist an uploaded image so Google Lens can fetch it. Requires a public API_PUBLIC_URL."""
+        from pathlib import Path
+
+        settings = self.settings
+        if settings.API_PUBLIC_URL.startswith(
+            "http://localhost"
+        ) or settings.API_PUBLIC_URL.startswith("http://127."):
+            return None
+        try:
+            raw = base64.b64decode(image_base64.split(",")[-1], validate=True)
+        except Exception as exc:
+            raise ValueError("Invalid image data") from exc
+        if len(raw) > 5 * 1024 * 1024:
+            raise ValueError("Image too large (max 5MB)")
+        if not (raw.startswith(b"\xff\xd8") or raw.startswith(b"\x89PNG") or raw[:4] == b"RIFF"):
+            raise ValueError("Only JPEG, PNG or WebP images are supported")
+        ext = (
+            "jpg"
+            if raw.startswith(b"\xff\xd8")
+            else "png"
+            if raw.startswith(b"\x89PNG")
+            else "webp"
+        )
+        name = f"{uuid.uuid4().hex}.{ext}"
+        upload_dir = Path(__file__).resolve().parent.parent.parent / "uploads"
+        upload_dir.mkdir(exist_ok=True)
+        (upload_dir / name).write_bytes(raw)
+        return f"{settings.API_PUBLIC_URL.rstrip('/')}/uploads/{name}"
+
+    # ------------------------------------------------------------ persistence
+    async def _persist_groups(
+        self, groups: list[ListingGroup], query_type: str
+    ) -> list[ProductSearchResult]:
+        results: list[ProductSearchResult] = []
+        for group in groups[:40]:
+            ref_listing = group.listings[0][0]
+            identifiers = dict(group.reference.identifiers)
+            for listing, _ in group.listings:
+                for k, v in catalog.clean_identifiers(listing.identifiers).items():
+                    identifiers.setdefault(k, v)
+            product = await catalog.upsert_product(
+                self.db,
+                group.title,
+                attrs=group.reference.attrs,
+                identifiers=identifiers,
+                brand=ref_listing.brand,
+                category=ref_listing.category,
+                image_url=next((l.image_url for l, _ in group.listings if l.image_url), None),
+                source_provider=ref_listing.source_provider,
+                source_url=ref_listing.url,
+                is_demo=all(l.is_demo for l, _ in group.listings),
+            )
+            group.product = product
+            variant = await catalog.primary_variant(self.db, product)
+            for listing, match in group.listings:
+                tp = true_price_from_listing(listing)
+                if tp:
+                    await catalog.record_offer(
+                        self.db, product, listing, tp, match, variant=variant
+                    )
+            results.append(await self._result_for_product(product, group))
+        return results
+
+    async def _result_for_product(
+        self, product: Product, group: ListingGroup | None
+    ) -> ProductSearchResult:
+        offers = await catalog.load_offers(self.db, product.id)
+        exact = [o for o in offers if o.match_type == MatchType.EXACT.value]
+        prices = [float(o.estimated_final_price) for o in exact] or [
+            float(o.estimated_final_price) for o in offers
+        ]
+        ratings = [(float(o.rating), o.rating_count or 1) for o in offers if o.rating]
+        avg_rating = (
+            round(sum(r * n for r, n in ratings) / sum(n for _, n in ratings), 1)
+            if ratings
+            else None
+        )
+        match = None
+        if group is not None and group.reference_match is not None:
+            m = group.reference_match
+            match = MatchInfo(
+                match_type=m.match_type.value,
+                confidence=m.confidence,
+                label=m.label,
+                reasons=m.reasons,
+            )
+        return ProductSearchResult(
+            id=product.id,
+            name=product.name,
+            brand=product.brand,
+            category=product.category,
+            image=(product.images or [None])[0],
+            lowest_price=min(prices) if prices else None,
+            highest_price=max(prices) if prices else None,
+            offer_count=len(offers),
+            retailers=sorted({o.retailer.name for o in offers if o.retailer}),
+            average_rating=avg_rating,
+            match=match,
+            is_demo=product.is_demo or all(o.is_demo for o in offers)
+            if offers
+            else product.is_demo,
+        )
+
+    @staticmethod
+    def _sort(results: list[ProductSearchResult], sort_by: str | None) -> list[ProductSearchResult]:
+        if sort_by == "price_asc":
+            return sorted(results, key=lambda r: r.lowest_price or float("inf"))
+        if sort_by == "price_desc":
+            return sorted(results, key=lambda r: -(r.lowest_price or 0))
+        if sort_by == "rating":
+            return sorted(results, key=lambda r: -(r.average_rating or 0))
+        return results
