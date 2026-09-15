@@ -32,6 +32,7 @@ from app.services import catalog
 from app.services.market_filter import filter_to_market
 from app.services.price_engine import true_price_from_listing
 from app.services.product_matcher import Candidate, MatchResult, MatchType, match_products
+from app.services.product_normalizer import extract_attributes
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +78,28 @@ def group_listings(
                 )
             )
     return groups
+
+
+def filter_accessories(listings: list, query_text: str | None) -> tuple[list, int]:
+    """Drop accessory listings unless the shopper asked for an accessory.
+
+    A ₹999 skin sitting beside ₹22,000 headphones reads as a suspiciously cheap
+    version of the product, even when correctly separated into its own entry.
+    Someone who wants one can say so ("WH-1000XM5 skins"), and then they are kept.
+
+    Returns (kept, dropped_count).
+    """
+    query_attrs = extract_attributes(query_text or "")
+    if query_attrs.is_accessory:
+        return listings, 0
+
+    kept, dropped = [], 0
+    for listing in listings:
+        if extract_attributes(listing.title, None, listing.brand).is_accessory:
+            dropped += 1
+        else:
+            kept.append(listing)
+    return kept, dropped
 
 
 def query_from_url(url: str) -> str:
@@ -163,6 +186,17 @@ class SearchService:
             more = f" and {len(excluded_names) - 4} more" if len(excluded_names) > 4 else ""
             warnings.append(
                 f"Excluded {excluded_count} listing(s) from outside India ({shown}{more})."
+            )
+
+        # Accessories for the product are not the product. Unless the shopper asked for
+        # one, keep them out of the result set entirely rather than listing them beside
+        # the real item at a fraction of the price.
+        accessory_query = reference.title if reference is not None else query_text
+        listings, dropped_accessories = filter_accessories(listings, accessory_query)
+        if dropped_accessories:
+            warnings.append(
+                f"Hid {dropped_accessories} accessory listing(s) (cases, skins, straps). "
+                f"Add the accessory name to your search to see them."
             )
 
         groups = group_listings(listings)

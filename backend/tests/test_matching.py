@@ -132,3 +132,29 @@ def test_accessory_to_accessory_still_compares_normally():
         "Spigen Ultra Hybrid Case for iPhone 15 Pro Max",
     )
     assert result.match_type == MatchType.EXACT
+
+
+def test_accessories_hidden_unless_the_shopper_asks_for_them():
+    """A ₹999 skin beside ₹22,000 headphones reads as a suspiciously cheap version of
+    the product. Hide accessories unless the query names one."""
+    from app.providers.base import NormalizedListing
+    from app.services.search_service import filter_accessories
+
+    listings = [
+        NormalizedListing(title="Sony WH-1000XM5 Wireless Noise Cancelling Headphones", price=21990.0),
+        NormalizedListing(title="Sony WH-1000XM5 Wireless Headphone Skins & Wraps", price=999.0),
+        NormalizedListing(title="WC SweatZ XM5 Protective Covers for Sony", price=999.0),
+    ]
+
+    kept, dropped = filter_accessories(listings, "Sony WH-1000XM5")
+    assert dropped == 2
+    assert [listing.title for listing in kept] == [
+        "Sony WH-1000XM5 Wireless Noise Cancelling Headphones"
+    ]
+
+    # Asking for the accessory brings them back.
+    kept, dropped = filter_accessories(listings, "Sony WH-1000XM5 skins")
+    assert dropped == 0 and len(kept) == 3
+
+    kept, dropped = filter_accessories(listings, "iPhone 15 case")
+    assert dropped == 0 and len(kept) == 3
