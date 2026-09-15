@@ -124,6 +124,17 @@ ACCESSORY_WORDS = {
     "holder",
     "dock",
     "replacement",
+    "wrap",
+    "decal",
+    "sticker",
+    "guard",
+    "grip",
+    "carrying case",
+    "hard case",
+    "travel case",
+    "ear cushion",
+    "earcup",
+    "cushion",
 }
 PRODUCT_LINE_BRANDS = {
     "iphone": "apple",
@@ -274,11 +285,14 @@ def extract_attributes(
         brand = PRODUCT_LINE_BRANDS[brand]
     attrs.brand = brand
 
-    # accessory detection ("case for iPhone", "charger")
-    attrs.is_accessory = any(re.search(rf"\b{re.escape(w)}\b", text) for w in ACCESSORY_WORDS) and (
-        " for " in text
-        or "compatible" in text
-        or any(w in text for w in ("case", "cover", "protector", "charger", "cable"))
+    # Accessory detection. The presence of an accessory noun is sufficient on its own:
+    # real listings such as "XtremeSkins <Product> Skins & Wraps" name no second trigger,
+    # and treating them as the product itself drags a ₹1,200 decal into a ₹25,000
+    # headphone comparison. Plurals are matched too ("skins", "wraps").
+    # If the shopper is genuinely searching for an accessory, the reference listing is
+    # flagged the same way, so like still matches like.
+    attrs.is_accessory = any(
+        re.search(rf"\b{re.escape(w)}s?\b", text) for w in ACCESSORY_WORDS
     )
 
     # RAM / storage

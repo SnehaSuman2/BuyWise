@@ -98,3 +98,37 @@ def test_missing_variant_info_lowers_confidence():
     assert full.match_type == MatchType.EXACT and partial.match_type == MatchType.EXACT
     assert partial.confidence < full.confidence
     assert partial.label == "Possible match"
+
+
+def test_accessory_listings_never_match_the_product_itself():
+    """Regression: a ₹1,200 decal was being grouped into a ₹25,000 headphone listing
+    in production, becoming the "cheapest" pick. Accessory nouns (including plurals)
+    must be enough on their own to keep a listing out of the product's own group."""
+    product = "Sony WH-1000XM5 Wireless Noise Cancelling Headphones"
+    for accessory in (
+        "XtremeSkins Sony WH-1000XM5 Skins & Wraps UK",
+        "Sony WH-1000XM5 Replacement Ear Pads",
+        "Hard Carrying Case for Sony WH-1000XM5",
+        "Sony WH-1000XM5 Headphone Stand",
+    ):
+        result = quick_match(product, accessory)
+        assert result.match_type != MatchType.EXACT, f"{accessory!r} matched as the product"
+
+
+def test_real_product_listings_still_match_despite_accessory_fix():
+    """The accessory fix must not make genuine listings stop matching."""
+    product = "Sony WH-1000XM5 Wireless Noise Cancelling Headphones"
+    for genuine in (
+        "Sony WH-1000XM5 Industry Leading Noise-Cancelling Headphones",
+        "Sony WH-1000XM5 Wireless Noise Canceling Headphones",
+    ):
+        assert quick_match(product, genuine).match_type == MatchType.EXACT, genuine
+
+
+def test_accessory_to_accessory_still_compares_normally():
+    """Someone searching for a case should still get case-to-case comparisons."""
+    result = quick_match(
+        "Spigen Ultra Hybrid Case for iPhone 15 Pro Max",
+        "Spigen Ultra Hybrid Case for iPhone 15 Pro Max",
+    )
+    assert result.match_type == MatchType.EXACT

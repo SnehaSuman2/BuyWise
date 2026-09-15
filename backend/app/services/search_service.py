@@ -56,10 +56,6 @@ def group_listings(
         cand = Candidate(
             listing.title, catalog.clean_identifiers(listing.identifiers), listing.brand
         )
-        if cand.attrs.is_accessory and not any(
-            w in (listing.title.lower()) for w in ("case", "cover", "protector", "charger", "cable")
-        ):
-            cand.attrs.is_accessory = False
         best: tuple[ListingGroup, MatchResult] | None = None
         for group in groups:
             res = match_products(group.reference, cand)
