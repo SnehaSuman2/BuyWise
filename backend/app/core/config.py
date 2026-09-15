@@ -85,6 +85,16 @@ class Settings(BaseSettings):
     RATE_LIMIT_AUTH: str = "10/minute"
     ADMIN_EMAILS: str = ""  # comma-separated emails auto-granted the admin role
 
+    # --- Market ---
+    # BuyWise serves India. Google Shopping returns international merchants even with
+    # gl=in; their prices are currency conversions a shopper here cannot actually pay.
+    MARKET_FILTER_ENABLED: bool = True
+    # Google Shopping identifies merchants by display name only (no URL), so most
+    # legitimate Indian long-tail sellers are unrecognisable. Strict mode drops those
+    # too, which in testing removed ~37 of 40 real listings. Default keeps unknowns and
+    # drops only merchants identifiably outside India. Set true for maximum purity.
+    STRICT_MARKET_FILTER: bool = False
+
     # --- SerpApi (ONE key for every engine) ---
     SERPAPI_API_KEY: str = ""
     SERPAPI_TIMEOUT_SECONDS: float = 20.0

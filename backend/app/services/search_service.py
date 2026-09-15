@@ -29,6 +29,7 @@ from app.schemas.common import DataMeta
 from app.schemas.product import MatchInfo, ProductSearchResult
 from app.schemas.search import SearchRequest, SearchResponse
 from app.services import catalog
+from app.services.market_filter import filter_to_market
 from app.services.price_engine import true_price_from_listing
 from app.services.product_matcher import Candidate, MatchResult, MatchType, match_products
 
@@ -152,6 +153,17 @@ class SearchService:
             providers_used += meta["providers"]
             warnings += meta["warnings"]
             cached = meta["cached"]
+
+        # Keep only merchants that actually sell into India before anything is grouped,
+        # matched or persisted — a foreign listing's converted price is not a price the
+        # shopper can pay, and it would otherwise become a "cheapest" pick.
+        listings, excluded_count, excluded_names = filter_to_market(listings)
+        if excluded_count:
+            shown = ", ".join(excluded_names[:4])
+            more = f" and {len(excluded_names) - 4} more" if len(excluded_names) > 4 else ""
+            warnings.append(
+                f"Excluded {excluded_count} listing(s) from outside India ({shown}{more})."
+            )
 
         groups = group_listings(listings)
         if reference is not None:

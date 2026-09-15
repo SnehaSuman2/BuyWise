@@ -23,6 +23,7 @@ from app.schemas.product import MatchInfo
 from app.schemas.retailer import RetailerResponse, SellerResponse
 from app.services import catalog
 from app.services.affiliate_service import go_url_for
+from app.services.market_filter import filter_to_market
 from app.services.price_engine import compute_true_price, true_price_from_listing
 from app.services.product_matcher import Candidate, MatchResult, MatchType, match_products
 from app.services.trust_service import TrustService
@@ -66,6 +67,14 @@ class OfferService:
                 listings.extend(res.items)
                 break
             warnings.append(f"{provider.engine} temporarily unavailable.")
+        # Same market guard as search: never persist an offer from a merchant that
+        # doesn't sell into India.
+        listings, excluded_count, excluded_names = filter_to_market(listings)
+        if excluded_count:
+            warnings.append(
+                f"Excluded {excluded_count} offer(s) from outside India "
+                f"({', '.join(excluded_names[:4])})."
+            )
         variant = await catalog.primary_variant(self.db, product)
         stored = 0
         for listing in listings:
