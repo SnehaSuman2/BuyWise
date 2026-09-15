@@ -385,6 +385,7 @@ class SearchService:
         self, groups: list[ListingGroup], query_type: str
     ) -> list[ProductSearchResult]:
         results: list[ProductSearchResult] = []
+        seen: dict[uuid.UUID, ListingGroup] = {}
         for group in groups[:40]:
             ref_listing = group.listings[0][0]
             identifiers = dict(group.reference.identifiers)
@@ -411,7 +412,18 @@ class SearchService:
                     await catalog.record_offer(
                         self.db, product, listing, tp, match, variant=variant
                     )
-            results.append(await self._result_for_product(product, group))
+            # Several listing groups can resolve to the same stored product (a group
+            # whose title differs but whose identifiers/canonical key match an existing
+            # row). Record it once, keeping the first group for match attribution.
+            if product.id not in seen:
+                seen[product.id] = group
+
+        # Build results only after every group is persisted, so offer counts and price
+        # ranges reflect all offers rather than however many existed mid-loop.
+        for product_id, group in seen.items():
+            product = await catalog.load_product(self.db, product_id)
+            if product is not None:
+                results.append(await self._result_for_product(product, group))
         return results
 
     async def _result_for_product(

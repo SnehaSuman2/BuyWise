@@ -135,6 +135,12 @@ FOREIGN_PLACE_WORDS = {
     "sri lanka", "nepal", "united kingdom", "germany", "france", "italy", "spain",
 }
 
+# Merchants identifiable as foreign by name alone (seen in live Indian results).
+KNOWN_FOREIGN_NAMES = {
+    "wafuu.com", "wafuu", "etoren.com", "etoren", "dakauf.eu", "dakauf",
+    "empire online shopping", "xtremeskins",
+}
+
 INDIA = "india"
 FOREIGN = "foreign"
 UNKNOWN = "unknown"
@@ -203,6 +209,10 @@ def classify_market(domain: str | None, retailer_name: str | None = None) -> str
         if resolve_retailer(name, None):
             return INDIA
         lowered = name.lower().strip()
+        if lowered in KNOWN_FOREIGN_NAMES or any(
+            re.search(rf"\b{re.escape(k)}\b", lowered) for k in KNOWN_FOREIGN_NAMES
+        ):
+            return FOREIGN
         if lowered in KNOWN_INDIAN_NAMES or any(
             re.search(rf"\b{re.escape(k)}\b", lowered) for k in KNOWN_INDIAN_NAMES
         ):
