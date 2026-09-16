@@ -127,3 +127,48 @@ def test_google_search_and_lens_normalization():
         }
     )
     assert v.price == 25000 and v.currency == "INR" and v.retailer_domain == "flipkart.com"
+
+
+def test_amazon_review_insights_normalization():
+    """Amazon aggregates its own review corpus into themed insights with mention counts,
+    which gives real pros/cons without needing an AI provider."""
+    from app.providers.serpapi.amazon_product import normalize_review_insights
+
+    data = {
+        "reviews_information": {
+            "summary": {
+                "text": "Customers praise the sound quality.",
+                "insights": [
+                    {
+                        "title": "Sound quality",
+                        "sentiment": "positive",
+                        "mentions": {"total": 291, "positive": 205, "negative": 86},
+                        "summary": "Crisp treble.",
+                        "examples": [{"snippet": "Great sound", "link": "https://x"}],
+                    },
+                    {
+                        "title": "Value for money",
+                        "sentiment": "mixed",
+                        "mentions": {"total": 142, "positive": 65, "negative": 77},
+                    },
+                ],
+            }
+        }
+    }
+    insights = normalize_review_insights(data, {"reviews": 17217, "rating": 4.4}, "B0X", "amazon.in")
+    assert insights.total_reviews == 17217 and insights.average_rating == 4.4
+    assert [t.theme for t in insights.themes] == ["Sound quality", "Value for money"]
+    assert insights.themes[0].positive_mentions == 205
+    assert insights.themes[1].sentiment == "mixed"
+
+
+def test_implausible_average_rating_is_dropped():
+    """A 5.0 average over 17,000 reviews is not a real corpus — better to show nothing."""
+    from app.providers.serpapi.amazon_product import normalize_review_insights
+
+    data = {"reviews_information": {"summary": {"text": "Good", "insights": []}}}
+    implausible = normalize_review_insights(data, {"reviews": 17217, "rating": 5.0}, "B0X", "amazon.in")
+    assert implausible.average_rating is None
+    # A perfect score on a small corpus is plausible and kept.
+    small = normalize_review_insights(data, {"reviews": 7, "rating": 5.0}, "B0X", "amazon.in")
+    assert small.average_rating == 5.0

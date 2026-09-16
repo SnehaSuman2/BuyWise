@@ -6,8 +6,11 @@ from app.core.config import get_settings
 from app.providers.base import (
     NormalizedListing,
     NormalizedProductDetails,
+    NormalizedReviewInsights,
     ProductDetailsProvider,
     ProviderResult,
+    ReviewTheme,
+    parse_int,
     parse_price,
 )
 from app.providers.serpapi.client import SerpApiError, get_serpapi_client
@@ -25,6 +28,60 @@ def _first(d: dict, *keys):
         if d.get(k) not in (None, "", []):
             return d[k]
     return None
+
+
+def normalize_review_insights(
+    data: dict, product: dict, asin: str, amazon_domain: str
+) -> NormalizedReviewInsights | None:
+    """Amazon aggregates its own review corpus into themed insights with mention counts.
+
+    Shape: reviews_information.summary = {text, insights: [{title, sentiment,
+    mentions: {total, positive, negative}, summary, examples: [{snippet, link}]}]}
+    """
+    summary_block = (data.get("reviews_information") or {}).get("summary") or {}
+    insights = summary_block.get("insights") or []
+    if not summary_block.get("text") and not insights:
+        return None
+
+    themes: list[ReviewTheme] = []
+    for raw in insights:
+        title = raw.get("title")
+        if not title:
+            continue
+        mentions = raw.get("mentions") or {}
+        themes.append(
+            ReviewTheme(
+                theme=str(title),
+                sentiment=str(raw.get("sentiment") or "mixed").lower(),
+                total_mentions=parse_int(mentions.get("total")) or 0,
+                positive_mentions=parse_int(mentions.get("positive")) or 0,
+                negative_mentions=parse_int(mentions.get("negative")) or 0,
+                summary=raw.get("summary"),
+                examples=[
+                    e["snippet"].strip()
+                    for e in (raw.get("examples") or [])
+                    if isinstance(e, dict) and e.get("snippet")
+                ][:3],
+            )
+        )
+
+    # The product-page rating field is unreliable — it returned 5.0 for a product with
+    # 17,217 reviews, which no real corpus produces. Publishing that would be worse than
+    # publishing nothing, so an implausibly perfect average on a large corpus is dropped
+    # and the themed mention counts (which are corroborated) carry the section instead.
+    total_reviews = parse_int(product.get("reviews"))
+    average_rating = rating_of(product.get("rating"))
+    if average_rating is not None and total_reviews and total_reviews > 100 and average_rating >= 4.95:
+        average_rating = None
+
+    return NormalizedReviewInsights(
+        summary=summary_block.get("text"),
+        total_reviews=total_reviews,
+        average_rating=average_rating,
+        themes=themes,
+        source="amazon.in" if amazon_domain.endswith(".in") else amazon_domain,
+        source_url=f"https://www.{amazon_domain}/dp/{asin}",
+    )
 
 
 def normalize_amazon_product(data: dict, asin: str, amazon_domain: str) -> NormalizedProductDetails:
@@ -167,6 +224,7 @@ def normalize_amazon_product(data: dict, asin: str, amazon_domain: str) -> Norma
         identifiers=identifiers,
         variants=variants,
         offers=offers,
+        review_insights=normalize_review_insights(data, product, asin, amazon_domain),
         source_provider="serpapi",
         source_engine="amazon_product",
         source_url=f"https://www.{amazon_domain}/dp/{asin}",

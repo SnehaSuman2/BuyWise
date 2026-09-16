@@ -13,7 +13,15 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.data.retailers import resolve_retailer, slugify
-from app.models import Offer, PriceHistory, Product, ProductVariant, Retailer, Seller
+from app.models import (
+    Offer,
+    PriceHistory,
+    Product,
+    ProductVariant,
+    Retailer,
+    ReviewAnalysis,
+    Seller,
+)
 from app.providers.base import NormalizedListing
 from app.services.price_engine import TruePrice
 from app.services.product_matcher import MatchResult, MatchType
@@ -312,6 +320,64 @@ async def record_offer(
             )
         )
     return offer
+
+
+async def store_review_insights(db: AsyncSession, product: Product, insights) -> None:
+    """Persist retailer-aggregated review themes as this product's review analysis.
+
+    These counts come from the retailer's own aggregation over its full review corpus,
+    so they are recorded as observed facts with provenance rather than as an AI summary.
+    """
+    if insights is None or not (insights.themes or insights.summary):
+        return
+
+    positive, negative = [], []
+    for theme in insights.themes:
+        entry = {
+            "theme": theme.theme,
+            "count": theme.total_mentions,
+            "positive": theme.positive_mentions,
+            "negative": theme.negative_mentions,
+            "summary": theme.summary,
+            "examples": theme.examples,
+        }
+        # "mixed" themes are the honest cons: enough people raised the issue that it is
+        # worth surfacing, even though others were satisfied.
+        if theme.sentiment == "positive" and theme.positive_mentions >= theme.negative_mentions:
+            entry["sentiment"] = "positive"
+            positive.append(entry)
+        else:
+            entry["sentiment"] = "negative" if theme.sentiment == "negative" else "mixed"
+            negative.append(entry)
+
+    positive.sort(key=lambda t: -t["count"])
+    negative.sort(key=lambda t: -t["negative"])
+
+    existing = (
+        await db.execute(
+            select(ReviewAnalysis)
+            .where(ReviewAnalysis.product_id == product.id)
+            .order_by(ReviewAnalysis.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    values = dict(
+        total_reviews=insights.total_reviews,
+        average_rating=insights.average_rating,
+        positive_themes=positive,
+        negative_themes=negative,
+        summary=insights.summary,
+        confidence=0.8,
+        provider=insights.source,
+        is_demo=False,
+    )
+    if existing is None:
+        db.add(ReviewAnalysis(product_id=product.id, **values))
+    else:
+        for k, v in values.items():
+            setattr(existing, k, v)
+    await db.flush()
 
 
 async def load_product(db: AsyncSession, product_id: uuid.UUID) -> Product | None:

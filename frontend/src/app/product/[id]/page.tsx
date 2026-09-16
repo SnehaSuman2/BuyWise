@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Star, TrendingDown, TrendingUp, Minus, Award, IndianRupee, Shield, Sparkles, Info } from "lucide-react";
+import { Star, TrendingDown, TrendingUp, Minus, Award, IndianRupee, Shield, Sparkles, Info, ThumbsUp, ThumbsDown, MessagesSquare } from "lucide-react";
 import { serverGet } from "@/lib/api";
 import { formatPrice, getPriceActionColor, priceActionLabel, priceStatusLabel, getTrustColor, riskLabel } from "@/lib/utils";
 import DataBadge from "@/components/ui/DataBadge";
@@ -11,7 +11,7 @@ import RecommendationCards from "@/components/product/RecommendationCards";
 import PriceHistoryChart from "@/components/product/PriceHistoryChart";
 import ProductActions from "@/components/product/ProductActions";
 import TrustScoreCard from "@/components/trust/TrustScoreCard";
-import type { OfferComparison, PriceHistoryData, ProductDetail, RecommendationSet, TrustScoreData } from "@/lib/types";
+import type { OfferComparison, PriceHistoryData, ProductDetail, RecommendationSet, ReviewAnalysis, TrustScoreData } from "@/lib/types";
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 
@@ -31,12 +31,13 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
 
 export default async function ProductPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const [product, offers, history, recs, trusts] = await Promise.all([
+  const [product, offers, history, recs, trusts, reviews] = await Promise.all([
     serverGet<ProductDetail>(`/products/${id}`),
     serverGet<OfferComparison>(`/products/${id}/offers`),
     serverGet<PriceHistoryData>(`/products/${id}/history?days=90`),
     serverGet<RecommendationSet>(`/products/${id}/recommendations`),
     serverGet<TrustScoreData[]>(`/products/${id}/trust`),
+    serverGet<ReviewAnalysis>(`/products/${id}/reviews`),
   ]);
   if (!product) notFound();
 
@@ -108,7 +109,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
       </section>
 
       <nav className="flex gap-1 overflow-x-auto mb-8 pb-2 border-b border-border/40" aria-label="Sections">
-        {[["recommendation", "Recommendation"], ["offers", "Compare offers"], ["history", "Price history"], ["trust", "Trust"]].map(([id, label]) => (
+        {[["recommendation", "Recommendation"], ["offers", "Compare offers"], ["history", "Price history"], ["reviews", "What buyers say"], ["trust", "Trust"]].map(([id, label]) => (
           <a key={id} href={`#${id}`} className="px-4 py-2 rounded-lg text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50 whitespace-nowrap transition-colors">{label}</a>
         ))}
       </nav>
@@ -147,6 +148,68 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
           </>
         ) : (
           <div className="glass rounded-2xl p-6 text-sm text-muted-foreground">{history?.message || "Price history unavailable for this product."}</div>
+        )}
+      </section>
+
+      <section id="reviews" className="mb-16">
+        <div className="flex flex-wrap items-center gap-3 mb-6">
+          <h2 className="text-2xl font-bold flex items-center gap-2"><MessagesSquare className="w-6 h-6 text-amber-500" /> What buyers say</h2>
+          {reviews?.meta && <DataBadge meta={reviews.meta} />}
+        </div>
+        {reviews?.available ? (
+          <div className="glass rounded-2xl p-6">
+            <div className="flex flex-wrap items-baseline gap-3 mb-4">
+              {reviews.average_rating ? (
+                <span className="flex items-center gap-1 text-lg font-bold"><Star className="w-5 h-5 text-amber-500 fill-current" />{reviews.average_rating}</span>
+              ) : null}
+              <span className="text-sm text-muted-foreground">{reviews.message}</span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div>
+                <h3 className="font-semibold text-sm mb-3 flex items-center gap-2 text-emerald-600"><ThumbsUp className="w-4 h-4" /> What people liked</h3>
+                {reviews.positive_themes.length ? (
+                  <ul className="space-y-2">
+                    {reviews.positive_themes.slice(0, 6).map((t) => (
+                      <li key={t.theme} className="text-sm">
+                        <div className="flex items-baseline justify-between gap-3">
+                          <span className="font-medium">{t.theme}</span>
+                          <span className="text-xs text-muted-foreground whitespace-nowrap">{t.count.toLocaleString("en-IN")} mentions</span>
+                        </div>
+                        {t.examples[0] && <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">&ldquo;{t.examples[0]}&rdquo;</p>}
+                      </li>
+                    ))}
+                  </ul>
+                ) : <p className="text-sm text-muted-foreground">No recurring positives identified.</p>}
+              </div>
+
+              <div>
+                <h3 className="font-semibold text-sm mb-3 flex items-center gap-2 text-amber-600"><ThumbsDown className="w-4 h-4" /> What people complained about</h3>
+                {reviews.negative_themes.length ? (
+                  <ul className="space-y-2">
+                    {reviews.negative_themes.slice(0, 6).map((t) => (
+                      <li key={t.theme} className="text-sm">
+                        <div className="flex items-baseline justify-between gap-3">
+                          <span className="font-medium">{t.theme}</span>
+                          <span className="text-xs text-muted-foreground whitespace-nowrap">{t.count.toLocaleString("en-IN")} mentions</span>
+                        </div>
+                        {t.examples[0] && <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">&ldquo;{t.examples[0]}&rdquo;</p>}
+                      </li>
+                    ))}
+                  </ul>
+                ) : <p className="text-sm text-muted-foreground">No recurring complaints identified.</p>}
+              </div>
+            </div>
+
+            {reviews.summary && (
+              <div className="mt-6 p-4 rounded-xl bg-muted/30 text-sm">
+                <p>{reviews.summary}</p>
+              </div>
+            )}
+            <p className="text-xs text-muted-foreground mt-4">Themes and mention counts are the retailer&apos;s own aggregation over its full review corpus, not a BuyWise summary. A theme appears under complaints when a substantial share of mentions were negative, even if most were positive.</p>
+          </div>
+        ) : (
+          <div className="glass rounded-2xl p-6 text-sm text-muted-foreground">{reviews?.message || "No aggregated review data for this product yet."}</div>
         )}
       </section>
 

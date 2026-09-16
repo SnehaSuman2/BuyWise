@@ -54,6 +54,34 @@ class NormalizedListing(BaseModel):
     is_demo: bool = False
 
 
+class ReviewTheme(BaseModel):
+    """One aspect customers repeatedly mention, with how the mentions split."""
+
+    theme: str
+    sentiment: str  # positive | negative | mixed
+    total_mentions: int = 0
+    positive_mentions: int = 0
+    negative_mentions: int = 0
+    summary: str | None = None
+    examples: list[str] = Field(default_factory=list)
+
+
+class NormalizedReviewInsights(BaseModel):
+    """Aggregated review themes for a product, as published by the retailer.
+
+    Marketplaces already aggregate their own review corpus into themed insights with
+    real mention counts. Using those beats having an LLM summarise a handful of scraped
+    reviews: the counts are drawn from the full corpus and each theme links to sources.
+    """
+
+    summary: str | None = None
+    total_reviews: int | None = None
+    average_rating: float | None = None
+    themes: list[ReviewTheme] = Field(default_factory=list)
+    source: str = "unknown"
+    source_url: str | None = None
+
+
 class NormalizedProductDetails(BaseModel):
     """Details of one product page (e.g. Amazon Product API)."""
 
@@ -67,6 +95,7 @@ class NormalizedProductDetails(BaseModel):
     identifiers: dict[str, str] = Field(default_factory=dict)
     variants: list[dict] = Field(default_factory=list)
     offers: list[NormalizedListing] = Field(default_factory=list)
+    review_insights: NormalizedReviewInsights | None = None
     source_provider: str = "unknown"
     source_engine: str | None = None
     source_url: str | None = None

@@ -266,6 +266,26 @@ export interface TrustScoreData {
   meta: DataMeta;
 }
 
+export interface ReviewTheme {
+  theme: string;
+  count: number;
+  sentiment: "positive" | "negative" | "mixed" | "neutral";
+  examples: string[];
+}
+
+export interface ReviewAnalysis {
+  product_id: string;
+  total_reviews: number;
+  average_rating?: number | null;
+  positive_themes: ReviewTheme[];
+  negative_themes: ReviewTheme[];
+  summary?: string | null;
+  confidence?: number | null;
+  available: boolean;
+  message?: string | null;
+  meta: DataMeta;
+}
+
 export interface Recommendation {
   category: PickCategory;
   product_id: string;

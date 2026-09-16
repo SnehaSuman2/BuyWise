@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.models import Review
+from app.models import Review, ReviewAnalysis
 from app.providers.llm import AIProviderError, get_llm_provider
 from app.schemas.common import DataMeta
 from app.schemas.review import ReviewAnalysisResponse, ReviewTheme
@@ -29,6 +29,50 @@ class ReviewAnalyzer:
         self.settings = get_settings()
 
     async def analyze(self, product_id: uuid.UUID) -> ReviewAnalysisResponse:
+        # Prefer retailer-aggregated review themes when we have them: the counts come
+        # from the retailer's full review corpus, which beats an AI summary of whatever
+        # handful of reviews we happen to have stored — and needs no AI provider at all.
+        stored = (
+            await self.db.execute(
+                select(ReviewAnalysis)
+                .where(ReviewAnalysis.product_id == product_id)
+                .order_by(ReviewAnalysis.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if stored is not None and (stored.positive_themes or stored.negative_themes):
+            def to_themes(rows, fallback):
+                out = []
+                for row in rows or []:
+                    out.append(
+                        ReviewTheme(
+                            theme=row.get("theme", ""),
+                            count=int(row.get("count") or 0),
+                            sentiment=row.get("sentiment", fallback),
+                            examples=[str(e) for e in (row.get("examples") or [])][:3],
+                        )
+                    )
+                return out
+
+            return ReviewAnalysisResponse(
+                product_id=product_id,
+                total_reviews=stored.total_reviews or 0,
+                average_rating=float(stored.average_rating) if stored.average_rating else None,
+                positive_themes=to_themes(stored.positive_themes, "positive"),
+                negative_themes=to_themes(stored.negative_themes, "negative"),
+                summary=stored.summary,
+                confidence=float(stored.confidence) if stored.confidence else None,
+                available=True,
+                message=f"Themes aggregated from {stored.total_reviews:,} reviews on {stored.provider}."
+                if stored.total_reviews
+                else f"Themes aggregated from reviews on {stored.provider}.",
+                meta=DataMeta(
+                    data_mode="demo" if stored.is_demo else "live",
+                    is_demo=stored.is_demo,
+                    providers=[stored.provider or "unknown"],
+                ),
+            )
+
         stmt = select(Review).where(Review.product_id == product_id)
         if not self.settings.demo_mode:
             stmt = stmt.where(Review.is_demo.is_(False))

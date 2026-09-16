@@ -58,6 +58,9 @@ class OfferService:
             providers_used.append(f"{provider.name}:{provider.engine}")
             if res.ok and res.items:
                 listings.extend(res.items[0].offers)
+                await catalog.store_review_insights(
+                    self.db, product, res.items[0].review_insights
+                )
             else:
                 warnings.append("Amazon data temporarily unavailable.")
         for provider in registry.product_search_providers():

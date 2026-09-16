@@ -328,6 +328,9 @@ class SearchService:
                     source_url=details.source_url,
                     is_demo=details.is_demo,
                 )
+                await catalog.store_review_insights(
+                    self.db, ref_product, details.review_insights
+                )
                 variant = await catalog.primary_variant(self.db, ref_product)
                 for offer in details.offers:
                     tp = true_price_from_listing(offer)
