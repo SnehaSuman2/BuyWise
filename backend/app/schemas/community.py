@@ -33,6 +33,7 @@ class CommunityReportResponse(BaseModel):
     rating: float | None = None
     verification_status: str
     moderation_status: str
+    flag_count: int = 0
     helpful_count: int = 0
     is_demo: bool = False
     created_at: datetime

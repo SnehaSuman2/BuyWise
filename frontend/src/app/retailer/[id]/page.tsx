@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { CheckCircle, Globe, Store, ArrowLeft, FileText } from "lucide-react";
 import { serverGet } from "@/lib/api";
 import TrustScoreCard from "@/components/trust/TrustScoreCard";
+import CommunityReviews from "@/components/community/CommunityReviews";
 import type { Retailer, TrustScoreData } from "@/lib/types";
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
@@ -48,6 +49,9 @@ export default async function RetailerPage({ params }: { params: Promise<{ id: s
           </ul>
         </div>
       )}
+      <div className="mt-6">
+        <CommunityReviews retailerId={retailer.id} subjectName={retailer.name} />
+      </div>
       {retailer.is_marketplace && <p className="text-xs text-muted-foreground mt-4">On marketplaces the seller of a listing may differ from the platform. BuyWise shows the seller on each offer and assesses seller trust separately when evidence exists.</p>}
     </div>
   );

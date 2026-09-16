@@ -4,7 +4,7 @@ import React, { useEffect, useState } from "react";
 import { useTheme } from "@/lib/theme";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Search, Bell, Bot, Menu, X, Moon, Sun, Sparkles, LayoutDashboard, LogOut, Crown, User as UserIcon } from "lucide-react";
+import { Search, Bell, Bot, Menu, X, Moon, Sun, Sparkles, LayoutDashboard, LogOut, Crown, ShieldCheck, User as UserIcon } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 
 export default function Header() {
@@ -62,6 +62,7 @@ export default function Header() {
                   <div className="absolute right-0 mt-2 w-52 glass-strong rounded-xl p-1 shadow-xl animate-slide-down" role="menu">
                     <Link href="/dashboard" onClick={() => setMenuOpen(false)} className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm hover:bg-muted" role="menuitem"><LayoutDashboard className="w-4 h-4" /> Dashboard</Link>
                     <Link href="/account" onClick={() => setMenuOpen(false)} className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm hover:bg-muted" role="menuitem"><UserIcon className="w-4 h-4" /> Account</Link>
+                    {user.role === "admin" && <Link href="/admin/moderation" onClick={() => setMenuOpen(false)} className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm hover:bg-muted" role="menuitem"><ShieldCheck className="w-4 h-4" /> Moderation</Link>}
                     <button onClick={handleLogout} className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm hover:bg-muted text-left" role="menuitem"><LogOut className="w-4 h-4" /> Sign out</button>
                   </div>
                 )}
@@ -82,6 +83,7 @@ export default function Header() {
               <>
                 <Link href="/dashboard" onClick={() => setMobileOpen(false)} className="flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted"><LayoutDashboard className="w-4 h-4" />Dashboard</Link>
                 <Link href="/account" onClick={() => setMobileOpen(false)} className="flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted"><UserIcon className="w-4 h-4" />Account</Link>
+                {user.role === "admin" && <Link href="/admin/moderation" onClick={() => setMobileOpen(false)} className="flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted"><ShieldCheck className="w-4 h-4" />Moderation</Link>}
                 <button onClick={() => { setMobileOpen(false); handleLogout(); }} className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium text-rose-500 text-left"><LogOut className="w-4 h-4" />Sign out</button>
               </>
             ) : (

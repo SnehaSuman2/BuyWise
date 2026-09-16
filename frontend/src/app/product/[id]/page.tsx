@@ -11,6 +11,7 @@ import RecommendationCards from "@/components/product/RecommendationCards";
 import PriceHistoryChart from "@/components/product/PriceHistoryChart";
 import ProductActions from "@/components/product/ProductActions";
 import TrustScoreCard from "@/components/trust/TrustScoreCard";
+import CommunityReviews from "@/components/community/CommunityReviews";
 import type { OfferComparison, PriceHistoryData, ProductDetail, RecommendationSet, ReviewAnalysis, TrustScoreData } from "@/lib/types";
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
@@ -221,6 +222,10 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
           </div>
         ) : <p className="text-sm text-muted-foreground">Not enough evidence to confidently assess these retailers yet.</p>}
         <p className="text-xs text-muted-foreground mt-4">Open a retailer to inspect factors, concerns and the evidence behind each score. <Link href="/trust-methodology" className="text-indigo-500 hover:underline">Methodology</Link></p>
+      </section>
+
+      <section id="community" className="mb-16">
+        <CommunityReviews productId={product.id} subjectName={product.name} />
       </section>
     </div>
   );

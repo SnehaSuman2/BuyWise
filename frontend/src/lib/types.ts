@@ -338,6 +338,37 @@ export interface AgentResponse {
   meta: DataMeta;
 }
 
+export type ReportType = "purchase" | "delivery" | "return" | "refund" | "authenticity" | "seller";
+
+export interface CommunityReport {
+  id: string;
+  username?: string | null;
+  product_id?: string | null;
+  retailer_id?: string | null;
+  seller_id?: string | null;
+  report_type: ReportType;
+  title?: string | null;
+  body: string;
+  rating?: number | null;
+  verification_status: "unverified" | "pending" | "verified" | "rejected";
+  moderation_status: "pending" | "approved" | "rejected" | "hidden";
+  flag_count: number;
+  helpful_count: number;
+  is_demo: boolean;
+  created_at: string;
+}
+
+export interface CommunityReportCreate {
+  product_id?: string;
+  retailer_id?: string;
+  seller_id?: string;
+  report_type: ReportType;
+  title?: string;
+  body: string;
+  rating?: number;
+  order_reference?: string;
+}
+
 export interface PriceAlert {
   id: string;
   product_id: string;

@@ -1,7 +1,9 @@
 /** API client for the BuyWise backend. Tokens live in localStorage; a 401 triggers one refresh attempt. */
 
 import type {
-  AgentResponse, AppMeta, CreateOrderResponse, Dashboard, OfferComparison, PlanInfo, PriceAlert, PriceHistoryData,
+  AgentResponse,
+  CommunityReport,
+  CommunityReportCreate, AppMeta, CreateOrderResponse, Dashboard, OfferComparison, PlanInfo, PriceAlert, PriceHistoryData,
   ProductDetail, RecommendationSet, Retailer, SearchResponse, SubscriptionStatus, TokenResponse, TrustScoreData, User,
 } from "./types";
 
@@ -129,6 +131,28 @@ export const api = {
   saveProduct: (product_id: string, note?: string) => request<{ id: string; already_saved: boolean }>("/saved-products", { method: "POST", body: JSON.stringify({ product_id, note }) }),
   unsaveProduct: (product_id: string) => request<void>(`/saved-products/${product_id}`, { method: "DELETE" }),
   savedProducts: () => request<Dashboard["saved_products"]>("/saved-products"),
+  // community reviews
+  communityReports: (params: { product_id?: string; retailer_id?: string; seller_id?: string }) => {
+    const qs = new URLSearchParams(
+      Object.entries(params).filter(([, v]) => Boolean(v)) as [string, string][],
+    ).toString();
+    return request<CommunityReport[]>(`/community/reports${qs ? `?${qs}` : ""}`);
+  },
+  createCommunityReport: (data: CommunityReportCreate) =>
+    request<CommunityReport>("/community/reports", { method: "POST", body: JSON.stringify(data) }),
+  myCommunityReports: () => request<CommunityReport[]>("/community/reports/mine"),
+  flagCommunityReport: (id: string, reason: string) =>
+    request<void>(`/community/reports/${id}/flag`, { method: "POST", body: JSON.stringify({ reason }) }),
+
+  // admin moderation
+  moderationQueue: (status = "pending") =>
+    request<CommunityReport[]>(`/admin/moderation?status=${status}`),
+  moderateReport: (id: string, action: string, note?: string) =>
+    request<CommunityReport>(`/admin/moderation/${id}`, {
+      method: "POST",
+      body: JSON.stringify({ action, note }),
+    }),
+
   // billing
   plans: () => request<PlanInfo[]>("/subscription/plans"),
   subscription: () => request<SubscriptionStatus>("/subscription"),

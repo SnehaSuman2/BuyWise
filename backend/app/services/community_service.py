@@ -159,6 +159,7 @@ class CommunityService:
             rating=float(r.rating) if r.rating else None,
             verification_status=r.verification_status,
             moderation_status=r.moderation_status,
+            flag_count=r.flag_count,
             helpful_count=r.helpful_count,
             is_demo=r.is_demo,
             created_at=r.created_at,
