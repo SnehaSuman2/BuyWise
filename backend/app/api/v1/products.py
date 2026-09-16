@@ -115,8 +115,11 @@ async def get_product_trust(product_id: UUID, db: AsyncSession = Depends(get_db)
         raise HTTPException(status_code=404, detail="Product not found")
     trust = TrustService(db)
     out = []
+    # Stored scores only. Gathering evidence inline here fired a SerpApi burst per
+    # merchant and pushed this endpoint past a minute, which timed out the product
+    # page. Unassessed retailers are simply omitted and show as unverified.
     for rid in {o.retailer_id for o in offers}:
-        t = await trust.get_retailer_trust(rid, include_evidence=False)
+        t = await trust.stored_retailer_trust(rid, include_evidence=False)
         if t:
             out.append(t)
     return sorted(out, key=lambda t: -(t.score or 0))

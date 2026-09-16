@@ -62,7 +62,7 @@ async def get_retailer(retailer_id: UUID, db: AsyncSession = Depends(get_db)):
     r = (await db.execute(select(Retailer).where(Retailer.id == retailer_id))).scalar_one_or_none()
     if not r:
         raise HTTPException(status_code=404, detail="Retailer not found")
-    trust = await TrustService(db).get_retailer_trust(retailer_id, include_evidence=False)
+    trust = await TrustService(db).stored_retailer_trust(retailer_id, include_evidence=False)
     count = (
         await db.execute(
             select(func.count())
@@ -103,8 +103,13 @@ async def get_trust_score(
 ):
     if refresh and not (user and user.role == "admin"):
         refresh = False
-    result = await TrustService(db).get_retailer_trust(
-        retailer_id, include_evidence=True, refresh=refresh
+    service = TrustService(db)
+    # A normal page view reads what is on record; only an admin asking for a
+    # refresh is allowed to trigger live evidence collection, which is slow.
+    result = (
+        await service.get_retailer_trust(retailer_id, include_evidence=True, refresh=True)
+        if refresh
+        else await service.stored_retailer_trust(retailer_id, include_evidence=True)
     )
     if result is None:
         raise HTTPException(status_code=404, detail="Retailer not found")

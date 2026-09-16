@@ -300,6 +300,35 @@ class TrustService:
         )
         return self._response(score, retailer.name, "retailer", evidence)
 
+    async def stored_retailer_trust(
+        self, retailer_id: uuid.UUID, *, include_evidence: bool = True
+    ) -> TrustScoreResponse | None:
+        """Trust for one retailer using only what is already on record.
+
+        Never gathers web evidence. Doing that inline meant a product page listing
+        eight merchants fired dozens of SerpApi calls in series and took over a
+        minute, long enough for the page itself to time out. A retailer with
+        nothing on record returns None and renders as unverified; the
+        assess_new_retailers job fills it in shortly afterwards.
+
+        Use get_retailer_trust only where a live refresh is genuinely wanted, such
+        as an admin explicitly asking for one.
+        """
+        retailer = (
+            await self.db.execute(select(Retailer).where(Retailer.id == retailer_id))
+        ).scalar_one_or_none()
+        if retailer is None:
+            return None
+        score = await self._latest_score(retailer_id=retailer.id)
+        if score is None:
+            score = await self.ensure_baseline_score(retailer)
+        if score is None:
+            return None
+        evidence = (
+            await self._load_evidence(retailer_id=retailer.id, limit=40) if include_evidence else []
+        )
+        return self._response(score, retailer.name, "retailer", evidence)
+
     async def get_seller_trust(self, seller_id: uuid.UUID) -> TrustScoreResponse | None:
         seller = (
             await self.db.execute(select(Seller).where(Seller.id == seller_id))

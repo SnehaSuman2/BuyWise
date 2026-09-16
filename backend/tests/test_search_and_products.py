@@ -115,7 +115,12 @@ async def test_trust_endpoint_has_evidence_and_explanation(client, demo_product)
         and rt.json()["evidence"]
         and all(e["url"] or e["source"] for e in rt.json()["evidence"])
     )
-    assert rt.json()["meta"]["is_demo"] is True
+    # A page view scores curated retailers from their real published policy facts,
+    # so the result is genuinely not demo data and must not be labelled as such.
+    body = rt.json()
+    assert body["meta"]["is_demo"] is False and body["meta"]["data_mode"] == "live"
+    assert {e["source"] for e in body["evidence"]} == {"retailer_policy"}
+    assert all(e["is_demo"] is False for e in body["evidence"])
 
 
 @pytest.mark.asyncio
@@ -151,3 +156,32 @@ def test_affiliate_url_building(monkeypatch):
     plain, none = build_affiliate_url("https://www.croma.com/x", "croma")
     assert plain == "https://www.croma.com/x" and none is None
     assert build_affiliate_url(None, "amazon-india") == (None, None)
+
+
+@pytest.mark.asyncio
+async def test_page_endpoints_never_gather_evidence_inline(client, demo_product, monkeypatch):
+    """Product and retailer pages must read stored trust only.
+
+    Collecting evidence inline fired a SerpApi burst per merchant and pushed the
+    product page past its timeout. Anything a visitor loads must stay off the network.
+    """
+    from app.services.trust_service import TrustService
+
+    calls = []
+
+    async def _boom(self, retailer):
+        calls.append(retailer.slug)
+        raise AssertionError(f"refresh_evidence called inline for {retailer.slug}")
+
+    monkeypatch.setattr(TrustService, "refresh_evidence", _boom)
+
+    trust = await client.get(f"/api/v1/products/{demo_product}/trust")
+    assert trust.status_code == 200, trust.text
+
+    retailers = await client.get("/api/v1/retailers")
+    assert retailers.status_code == 200
+    for r in retailers.json()[:3]:
+        assert (await client.get(f"/api/v1/retailers/{r['id']}")).status_code == 200
+        assert (await client.get(f"/api/v1/retailers/{r['id']}/trust")).status_code in (200, 404)
+
+    assert calls == []
