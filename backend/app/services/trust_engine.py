@@ -40,7 +40,7 @@ FACTOR_LABELS = {
 }
 SOURCE_RELIABILITY = {
     "verified_purchase": 1.0,
-    "policy": 0.8,
+    "policy": 0.95,
     "review_platform": 0.75,
     "community_report": 0.55,
     "search_result": 0.5,
@@ -336,6 +336,53 @@ def policy_evidence(retailer_name: str, policies: dict, is_demo: bool = False) -
                 "severity": 0.2,
                 "confidence": 0.6,
                 "claim": "Cash on delivery available, reducing prepayment risk",
+                "url": src,
+            }
+        )
+    established = policies.get("established_year_in_india")
+    if established:
+        years = 2026 - int(established)
+        out.append(
+            {
+                "topic": "transparency",
+                "sentiment": min(0.7, 0.3 + years / 40),
+                "severity": 0.2,
+                "confidence": 0.85,
+                "claim": f"Operating in India since {established} ({years} years)"
+                + (f", part of {policies['parent_company']}" if policies.get("parent_company") else ""),
+                "url": src,
+            }
+        )
+    if policies.get("verified_purchase_reviews"):
+        out.append(
+            {
+                "topic": "authenticity",
+                "sentiment": 0.5,
+                "severity": 0.2,
+                "confidence": 0.8,
+                "claim": "Reviews on this platform are marked as verified purchases",
+                "url": src,
+            }
+        )
+    if policies.get("authorised_sellers_only"):
+        out.append(
+            {
+                "topic": "authenticity",
+                "sentiment": 0.6,
+                "severity": 0.2,
+                "confidence": 0.8,
+                "claim": "Sells only through brand-authorised sellers",
+                "url": src,
+            }
+        )
+    if policies.get("customer_support_published"):
+        out.append(
+            {
+                "topic": "customer_service",
+                "sentiment": 0.4,
+                "severity": 0.2,
+                "confidence": 0.75,
+                "claim": "Publishes customer support contact channels",
                 "url": src,
             }
         )

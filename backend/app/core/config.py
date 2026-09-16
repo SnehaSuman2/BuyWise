@@ -117,7 +117,11 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     OPENAI_MODEL: str = "gpt-4o-mini"
     OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
-    AI_PROVIDER: Literal["auto", "openai", "demo"] = "auto"
+    GEMINI_API_KEY: str = ""
+    GEMINI_MODEL: str = "gemini-2.0-flash"
+    GEMINI_EMBEDDING_MODEL: str = "text-embedding-004"
+    # auto picks whichever key is configured, preferring Gemini (it has a free tier).
+    AI_PROVIDER: Literal["auto", "openai", "gemini", "demo"] = "auto"
 
     # --- Razorpay ---
     RAZORPAY_KEY_ID: str = ""
@@ -199,6 +203,14 @@ class Settings(BaseSettings):
     @property
     def openai_enabled(self) -> bool:
         return bool(self.OPENAI_API_KEY) and self.AI_PROVIDER in ("auto", "openai")
+
+    @property
+    def gemini_enabled(self) -> bool:
+        return bool(self.GEMINI_API_KEY) and self.AI_PROVIDER in ("auto", "gemini")
+
+    @property
+    def ai_enabled(self) -> bool:
+        return self.gemini_enabled or self.openai_enabled
 
     @property
     def razorpay_enabled(self) -> bool:
@@ -288,8 +300,11 @@ class Settings(BaseSettings):
                 "configured": self.serpapi_enabled,
             },
             "ai": {
-                "mode": "live" if self.openai_enabled else "mock",
-                "configured": self.openai_enabled,
+                "mode": "live" if self.ai_enabled else "mock",
+                "configured": self.ai_enabled,
+                "provider": "gemini"
+                if self.gemini_enabled
+                else ("openai" if self.openai_enabled else "demo"),
             },
             "razorpay": {
                 "mode": "live" if self.razorpay_enabled else "mock",

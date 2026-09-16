@@ -52,9 +52,13 @@ async def get_or_create_retailer(
             )
             db.add(retailer)
             await db.flush()
-        elif not retailer.is_curated:
+        else:
+            # The registry file is the source of truth for curated retailers. Without
+            # this, policy facts added to the registry never reach rows created earlier,
+            # and their trust scores silently keep using stale facts.
             retailer.is_curated = True
-            retailer.policies = curated.get("policies", {})
+            if retailer.policies != curated.get("policies", {}):
+                retailer.policies = curated.get("policies", {})
         return retailer
     display = (name or domain or "Unknown retailer").strip()
     slug = slugify(domain or display)
