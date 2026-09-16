@@ -175,3 +175,39 @@ async def test_mine_returns_only_the_callers_reports(client, auth_headers, admin
     assert len(mine.json()) == 1
     other = await client.get("/api/v1/community/reports/mine", headers=admin_headers)
     assert other.json() == []
+
+
+@pytest.mark.asyncio
+async def test_admin_role_is_reconciled_from_settings_on_login(client, monkeypatch):
+    """An operator who sets ADMIN_EMAILS after signing up must still get access."""
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    email, password = "late-admin@buywisetest.com", "Passw0rd!x"
+    registered = await client.post(
+        "/api/v1/auth/register",
+        json={"email": email, "username": "lateadmin", "password": password},
+    )
+    assert registered.status_code == 201
+    assert registered.json()["user"]["role"] == "user"
+
+    original = settings.ADMIN_EMAILS
+    monkeypatch.setattr(settings, "ADMIN_EMAILS", f"{original},{email}")
+    promoted = await client.post("/api/v1/auth/login", json={"email": email, "password": password})
+    assert promoted.json()["user"]["role"] == "admin"
+    headers = {"Authorization": f"Bearer {promoted.json()['access_token']}"}
+    assert (await client.get("/api/v1/admin/moderation", headers=headers)).status_code == 200
+
+    # Removing the address demotes on the next sign-in.
+    monkeypatch.setattr(settings, "ADMIN_EMAILS", original)
+    demoted = await client.post("/api/v1/auth/login", json={"email": email, "password": password})
+    assert demoted.json()["user"]["role"] == "user"
+    headers = {"Authorization": f"Bearer {demoted.json()['access_token']}"}
+    assert (await client.get("/api/v1/admin/moderation", headers=headers)).status_code == 403
+
+    # An empty list is treated as a misconfiguration, not a revoke-everyone.
+    monkeypatch.setattr(settings, "ADMIN_EMAILS", f"{original},{email}")
+    await client.post("/api/v1/auth/login", json={"email": email, "password": password})
+    monkeypatch.setattr(settings, "ADMIN_EMAILS", "")
+    still = await client.post("/api/v1/auth/login", json={"email": email, "password": password})
+    assert still.json()["user"]["role"] == "admin"

@@ -37,6 +37,23 @@ class AuthService:
         self.db = db
         self.settings = get_settings()
 
+    def _sync_admin_role(self, user: User) -> None:
+        """Reconcile the admin role from ADMIN_EMAILS on every sign-in.
+
+        The role is otherwise only set at registration, so an operator who adds
+        their address to ADMIN_EMAILS after signing up would never gain access.
+        Removal demotes too, but only while the list is non-empty: an unset or
+        blank ADMIN_EMAILS is far more likely a misconfigured deploy than a
+        deliberate "revoke every admin", and silently demoting everyone on it
+        would be a bad surprise.
+        """
+        admins = self.settings.admin_emails
+        if user.email in admins:
+            if user.role != "admin":
+                user.role = "admin"
+        elif admins and user.role == "admin":
+            user.role = "user"
+
     async def _issue_tokens(self, user: User, user_agent: str | None = None) -> TokenResponse:
         access = create_access_token(str(user.id), user.token_version)
         refresh, jti, expires = create_refresh_token(str(user.id), user.token_version)
@@ -99,6 +116,7 @@ class AuthService:
             raise HTTPException(status_code=401, detail="Invalid email or password")
         if not user.is_active:
             raise HTTPException(status_code=403, detail="Account deactivated")
+        self._sync_admin_role(user)
         return await self._issue_tokens(user, user_agent)
 
     async def google_login(self, id_token: str, user_agent: str | None = None) -> TokenResponse:
@@ -142,6 +160,7 @@ class AuthService:
                 await self.db.flush()
         if user.deleted_at is not None or not user.is_active:
             raise HTTPException(status_code=403, detail="Account unavailable")
+        self._sync_admin_role(user)
         return await self._issue_tokens(user, user_agent)
 
     async def refresh(self, refresh_token: str, user_agent: str | None = None) -> TokenResponse:
