@@ -118,8 +118,10 @@ class Settings(BaseSettings):
     OPENAI_MODEL: str = "gpt-4o-mini"
     OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
     GEMINI_API_KEY: str = ""
-    GEMINI_MODEL: str = "gemini-2.0-flash"
-    GEMINI_EMBEDDING_MODEL: str = "text-embedding-004"
+    # Google retires Gemini model versions periodically — a retired name fails with
+    # HTTP 404 naming its replacement. Override via env without a code change.
+    GEMINI_MODEL: str = "gemini-3.6-flash"
+    GEMINI_EMBEDDING_MODEL: str = "gemini-embedding-001"
     # auto picks whichever key is configured, preferring Gemini (it has a free tier).
     AI_PROVIDER: Literal["auto", "openai", "gemini", "demo"] = "auto"
 

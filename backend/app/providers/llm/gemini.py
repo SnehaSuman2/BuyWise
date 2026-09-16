@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 STATS = {"calls": 0, "failures": 0, "total_tokens": 0}
 
 API_ROOT = "https://generativelanguage.googleapis.com/v1beta"
+MIN_OUTPUT_TOKENS = 2048
 
 
 class GeminiProvider(BaseLLMProvider):
@@ -51,7 +52,11 @@ class GeminiProvider(BaseLLMProvider):
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
             "generationConfig": {
                 "temperature": temperature,
-                "maxOutputTokens": max_tokens,
+                # Gemini 3.x spends part of maxOutputTokens on internal reasoning before
+                # emitting any text, so a caller's modest limit can return an empty or
+                # truncated reply. Floor the budget so the visible answer still fits;
+                # callers' limits remain the upper bound when they ask for more.
+                "maxOutputTokens": max(max_tokens, MIN_OUTPUT_TOKENS),
             },
         }
         if system_prompt:
@@ -80,6 +85,11 @@ class GeminiProvider(BaseLLMProvider):
                 detail = (resp.json().get("error") or {}).get("message", "")[:200]
             except ValueError:
                 pass
+            if resp.status_code == 404 and "no longer available" in detail:
+                raise AIProviderError(
+                    f"Gemini model '{self.model}' has been retired. {detail} "
+                    "Set GEMINI_MODEL to a current model."
+                )
             raise AIProviderError(f"Gemini returned HTTP {resp.status_code}: {detail}")
 
         data = resp.json()
