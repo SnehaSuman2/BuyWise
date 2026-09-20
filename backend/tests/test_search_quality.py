@@ -189,3 +189,41 @@ async def test_price_bounds_apply_locally(client, monkeypatch):
     assert r.status_code == 200
     for x in r.json()["results"]:
         assert x["lowest_price"] <= 26000
+
+
+@pytest.mark.asyncio
+async def test_listings_without_a_merchant_are_not_results(client, monkeypatch):
+    items = [
+        listing("Sony WH-1000XM5 Wireless Headphones", "Amazon.in", "amazon.in", 24990),
+        NormalizedListing(
+            title="Sony WH-1000XM5 Wireless Headphones",
+            url="https://www.google.com/shopping/product/1",
+            price=9990,
+            retailer_name=None,
+            retailer_domain=None,
+            source_provider="test",
+        ),
+    ]
+    monkeypatch.setattr(registry, "product_search_providers", lambda: [FakeSearch(items)])
+    monkeypatch.setattr(registry, "retailer_search_providers", lambda: [FakeRetailerSearch()])
+    r = await client.post("/api/v1/search", json={"query": "sony wh-1000xm5"})
+    assert r.status_code == 200
+    for x in r.json()["results"]:
+        assert "Unknown retailer" not in x["retailers"]
+        assert x["lowest_price"] == 24990
+
+
+@pytest.mark.asyncio
+async def test_outage_shows_one_clear_warning(client, monkeypatch):
+    items = [listing("Sony WH-1000XM5 Wireless Headphones", "Amazon.in", "amazon.in", 24990)]
+    monkeypatch.setattr(registry, "product_search_providers", lambda: [FakeSearch(items)])
+    monkeypatch.setattr(registry, "retailer_search_providers", lambda: [FakeRetailerSearch()])
+    await client.post("/api/v1/search", json={"query": "sony wh-1000xm5"})
+    quota = "serpapi search quota reached"
+    monkeypatch.setattr(registry, "product_search_providers", lambda: [FakeSearch(error=quota)])
+    monkeypatch.setattr(
+        registry, "retailer_search_providers", lambda: [FakeRetailerSearch(error=quota)]
+    )
+    body = (await client.post("/api/v1/search", json={"query": "sony wh-1000xm5"})).json()
+    outage = [w for w in body["meta"]["warnings"] if "temporarily unavailable" in w]
+    assert len(outage) == 1 and "seen before" in outage[0]

@@ -183,6 +183,10 @@ class SearchService:
         # Keep only merchants that actually sell into India before anything is grouped,
         # matched or persisted — a foreign listing's converted price is not a price the
         # shopper can pay, and it would otherwise become a "cheapest" pick.
+        # A listing that names no merchant at all cannot be bought from, trusted or
+        # compared, so it is not a result. It would otherwise appear as "Unknown
+        # retailer" and could even become the cheapest pick.
+        listings = [l for l in listings if (l.retailer_name or l.retailer_domain)]
         listings, excluded_count, excluded_names = filter_to_market(listings)
         if excluded_count:
             shown = ", ".join(excluded_names[:4])
@@ -226,6 +230,7 @@ class SearchService:
             # already knows rather than showing nothing, and say so plainly.
             results = await self._catalog_fallback(query_text)
             if results:
+                warnings = [w for w in warnings if not w.startswith("Live retailer search")]
                 warnings.append(
                     "Live retailer search is temporarily unavailable. Showing products "
                     "BuyWise has seen before; prices may be out of date."
