@@ -157,8 +157,12 @@ def test_leading_queries_cannot_manufacture_a_bad_verdict():
         title="Terrible experience",
         snippet="worst service, cheated, refund never received",
     )
-    discovered = analyze_item(EvidenceItem(**identical, query="SomeShop reviews"), "r1", "someshop.com")
-    selected = analyze_item(EvidenceItem(**identical, query="SomeShop complaints"), "r1", "someshop.com")
+    discovered = analyze_item(
+        EvidenceItem(**identical, query="SomeShop reviews"), "r1", "someshop.com"
+    )
+    selected = analyze_item(
+        EvidenceItem(**identical, query="SomeShop complaints"), "r1", "someshop.com"
+    )
     assert selected.confidence < discovered.confidence
 
 

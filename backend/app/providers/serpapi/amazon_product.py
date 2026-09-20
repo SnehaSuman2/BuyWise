@@ -1,4 +1,5 @@
-"""SerpApi Amazon Product engine — product page details for an ASIN (identifiers, specs, buybox, sellers)."""
+"""Amazon product page for an ASIN — identifiers, specs, buybox, sellers, review
+insights. Works from SerpApi's shape directly; SearchApi's shape is adapted first."""
 
 from __future__ import annotations
 
@@ -13,7 +14,7 @@ from app.providers.base import (
     parse_int,
     parse_price,
 )
-from app.providers.serpapi.client import SerpApiError, get_serpapi_client
+from app.providers.search_client import SearchApiError, get_search_client
 from app.providers.serpapi.common import (
     availability_from_text,
     delivery_days_from_text,
@@ -71,7 +72,12 @@ def normalize_review_insights(
     # and the themed mention counts (which are corroborated) carry the section instead.
     total_reviews = parse_int(product.get("reviews"))
     average_rating = rating_of(product.get("rating"))
-    if average_rating is not None and total_reviews and total_reviews > 100 and average_rating >= 4.95:
+    if (
+        average_rating is not None
+        and total_reviews
+        and total_reviews > 100
+        and average_rating >= 4.95
+    ):
         average_rating = None
 
     return NormalizedReviewInsights(
@@ -84,7 +90,49 @@ def normalize_review_insights(
     )
 
 
-def normalize_amazon_product(data: dict, asin: str, amazon_domain: str) -> NormalizedProductDetails:
+def adapt_searchapi_product(data: dict) -> dict:
+    """Reshape a SearchApi amazon_product payload into the SerpApi-like dict the
+    normaliser below reads.
+
+    Differences handled: the price sits in buybox.price as {raw, value, currency}
+    rather than a string; the seller is buybox.fulfillment.sold_by; the main image
+    is main_image; attributes are a list of {name, value}; the availability text is
+    under fulfillment. Everything the normaliser already understands is left alone.
+    """
+    product = dict(data.get("product") or data.get("product_results") or data)
+    buybox = dict(product.get("buybox") or {})
+    price = buybox.get("price")
+    if isinstance(price, dict):
+        buybox["price"] = price.get("value") or price.get("raw")
+    original = buybox.get("original_price")
+    if isinstance(original, dict):
+        buybox["list_price"] = original.get("value") or original.get("raw")
+    elif original and not buybox.get("list_price"):
+        buybox["list_price"] = original
+    fulfillment = buybox.get("fulfillment") or {}
+    if isinstance(fulfillment, dict):
+        if fulfillment.get("sold_by") and not buybox.get("seller"):
+            buybox["seller"] = fulfillment["sold_by"]
+        if fulfillment.get("availability") and not buybox.get("availability"):
+            buybox["availability"] = fulfillment["availability"]
+        delivery = fulfillment.get("standard_delivery") or fulfillment.get("fastest_delivery")
+        if isinstance(delivery, dict):
+            delivery = " ".join(str(v) for v in delivery.values() if v)
+        if delivery and not buybox.get("delivery"):
+            buybox["delivery"] = delivery
+        if fulfillment.get("is_prime") and not buybox.get("prime"):
+            buybox["prime"] = True
+    product["buybox"] = buybox
+    if product.get("main_image") and not product.get("thumbnail"):
+        product["thumbnail"] = product["main_image"]
+    if product.get("attributes") and not product.get("product_information"):
+        product["product_information"] = product["attributes"]
+    return {**data, "product_results": product}
+
+
+def normalize_amazon_product(
+    data: dict, asin: str, amazon_domain: str, *, provider: str = "serpapi"
+) -> NormalizedProductDetails:
     product = data.get("product_results") or data.get("product") or data
     title = (product.get("title") or f"Amazon product {asin}").strip()
     specs: dict[str, str] = {}
@@ -168,7 +216,7 @@ def normalize_amazon_product(data: dict, asin: str, amazon_domain: str) -> Norma
                 rating=rating_of(product.get("rating")),
                 rating_count=reviews_of(product.get("reviews") or product.get("reviews_count")),
                 identifiers=identifiers,
-                source_provider="serpapi",
+                source_provider=provider,
                 source_engine="amazon_product",
             )
         )
@@ -194,7 +242,7 @@ def normalize_amazon_product(data: dict, asin: str, amazon_domain: str) -> Norma
                 delivery_text=ship_text or None,
                 condition="used" if "used" in str(other.get("condition", "")).lower() else "new",
                 identifiers=identifiers,
-                source_provider="serpapi",
+                source_provider=provider,
                 source_engine="amazon_product",
             )
         )
@@ -225,38 +273,43 @@ def normalize_amazon_product(data: dict, asin: str, amazon_domain: str) -> Norma
         variants=variants,
         offers=offers,
         review_insights=normalize_review_insights(data, product, asin, amazon_domain),
-        source_provider="serpapi",
+        source_provider=provider,
         source_engine="amazon_product",
         source_url=f"https://www.{amazon_domain}/dp/{asin}",
     )
 
 
 class AmazonProductProvider(ProductDetailsProvider):
-    name = "serpapi"
     engine = "amazon_product"
+
+    @property
+    def name(self) -> str:
+        return get_search_client().provider
 
     @property
     def enabled(self) -> bool:
         s = get_settings()
-        return s.serpapi_enabled and s.SERPAPI_ENABLE_AMAZON_PRODUCT
+        return s.search_api_enabled and s.SERPAPI_ENABLE_AMAZON_PRODUCT
 
     async def get_product_details(
         self, identifier: str
     ) -> ProviderResult[NormalizedProductDetails]:
         settings = get_settings()
-        client = get_serpapi_client()
-        params = {
-            "asin": identifier,
-            "amazon_domain": settings.SERPAPI_AMAZON_DOMAIN,
-            "language": "en_IN",
-        }
+        client = get_search_client()
+        params = {"asin": identifier, "amazon_domain": settings.SERPAPI_AMAZON_DOMAIN}
+        if client.provider == "serpapi":
+            params["language"] = "en_IN"
         try:
             data = await client.search(
                 self.engine, params, cache_ttl=settings.CACHE_TTL_OFFERS_SECONDS
             )
-        except SerpApiError as exc:
+        except SearchApiError as exc:
             return ProviderResult.failure(self.name, self.engine, str(exc))
-        details = normalize_amazon_product(data, identifier, settings.SERPAPI_AMAZON_DOMAIN)
+        if client.provider == "searchapi":
+            data = adapt_searchapi_product(data)
+        details = normalize_amazon_product(
+            data, identifier, settings.SERPAPI_AMAZON_DOMAIN, provider=client.provider
+        )
         return ProviderResult(
             items=[details],
             provider=self.name,

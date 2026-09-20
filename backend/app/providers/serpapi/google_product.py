@@ -78,7 +78,7 @@ class GoogleProductProvider(ProductDetailsProvider):
     @property
     def enabled(self) -> bool:
         s = get_settings()
-        return s.serpapi_enabled and s.SERPAPI_ENABLE_GOOGLE_PRODUCT
+        return s.search_api_enabled and s.SERPAPI_ENABLE_GOOGLE_PRODUCT
 
     async def get_product_details(
         self, identifier: str

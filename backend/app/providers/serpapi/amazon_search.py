@@ -1,4 +1,5 @@
-"""SerpApi Amazon Search engine (amazon.in) → NormalizedListing."""
+"""Amazon search (amazon.in) → NormalizedListing. SerpApi calls the engine "amazon"
+with query parameter "k"; SearchApi calls it "amazon_search" with "q"."""
 
 from __future__ import annotations
 
@@ -9,7 +10,7 @@ from app.providers.base import (
     RetailerSearchProvider,
     parse_price,
 )
-from app.providers.serpapi.client import SerpApiError, get_serpapi_client
+from app.providers.search_client import SearchApiError, get_search_client
 from app.providers.serpapi.common import (
     availability_from_text,
     delivery_days_from_text,
@@ -19,7 +20,9 @@ from app.providers.serpapi.common import (
 )
 
 
-def normalize_amazon_result(item: dict, amazon_domain: str) -> NormalizedListing | None:
+def normalize_amazon_result(
+    item: dict, amazon_domain: str, *, provider: str = "serpapi"
+) -> NormalizedListing | None:
     title = (item.get("title") or "").strip()
     asin = item.get("asin")
     if not title or not asin:
@@ -36,7 +39,7 @@ def normalize_amazon_result(item: dict, amazon_domain: str) -> NormalizedListing
         delivery = " ".join(str(d) for d in delivery)
     delivery = delivery or ""
     shipping_price, shipping_known = shipping_from_text(delivery)
-    if not shipping_known and item.get("prime"):
+    if not shipping_known and (item.get("prime") or item.get("is_prime")):
         shipping_price, shipping_known = 0.0, True  # Prime-eligible listings ship free on amazon.in
     return NormalizedListing(
         title=title,
@@ -57,38 +60,50 @@ def normalize_amazon_result(item: dict, amazon_domain: str) -> NormalizedListing
         rating=rating_of(item.get("rating")),
         rating_count=reviews_of(item.get("reviews")),
         identifiers={"asin": asin},
-        source_provider="serpapi",
+        source_provider=provider,
         source_engine="amazon",
     )
 
 
 class AmazonSearchProvider(RetailerSearchProvider):
-    name = "serpapi"
     engine = "amazon"
     retailer_slug = "amazon-india"
 
     @property
+    def name(self) -> str:
+        return get_search_client().provider
+
+    @property
     def enabled(self) -> bool:
         s = get_settings()
-        return s.serpapi_enabled and s.SERPAPI_ENABLE_AMAZON_SEARCH
+        return s.search_api_enabled and s.SERPAPI_ENABLE_AMAZON_SEARCH
 
     async def search_retailer(
         self, query: str, *, max_results: int = 10
     ) -> ProviderResult[NormalizedListing]:
         settings = get_settings()
-        client = get_serpapi_client()
-        params = {"k": query, "amazon_domain": settings.SERPAPI_AMAZON_DOMAIN, "language": "en_IN"}
+        client = get_search_client()
+        if client.provider == "searchapi":
+            engine = "amazon_search"
+            params = {"q": query, "amazon_domain": settings.SERPAPI_AMAZON_DOMAIN}
+        else:
+            engine = self.engine
+            params = {
+                "k": query,
+                "amazon_domain": settings.SERPAPI_AMAZON_DOMAIN,
+                "language": "en_IN",
+            }
         try:
-            data = await client.search(
-                self.engine, params, cache_ttl=settings.CACHE_TTL_SEARCH_SECONDS
-            )
-        except SerpApiError as exc:
+            data = await client.search(engine, params, cache_ttl=settings.CACHE_TTL_SEARCH_SECONDS)
+        except SearchApiError as exc:
             return ProviderResult.failure(self.name, self.engine, str(exc))
         items = []
         for raw in data.get("organic_results") or []:
             if raw.get("sponsored"):
                 continue  # sponsored placements never influence our data
-            listing = normalize_amazon_result(raw, settings.SERPAPI_AMAZON_DOMAIN)
+            listing = normalize_amazon_result(
+                raw, settings.SERPAPI_AMAZON_DOMAIN, provider=client.provider
+            )
             if listing:
                 items.append(listing)
         return ProviderResult(

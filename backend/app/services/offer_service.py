@@ -58,9 +58,7 @@ class OfferService:
             providers_used.append(f"{provider.name}:{provider.engine}")
             if res.ok and res.items:
                 listings.extend(res.items[0].offers)
-                await catalog.store_review_insights(
-                    self.db, product, res.items[0].review_insights
-                )
+                await catalog.store_review_insights(self.db, product, res.items[0].review_insights)
             else:
                 warnings.append("Amazon data temporarily unavailable.")
         for provider in registry.product_search_providers():
@@ -154,9 +152,7 @@ class OfferService:
             ),
         )
 
-    def _offer_response(
-        self, o: Offer, trust_entry: tuple | None
-    ) -> OfferResponse:
+    def _offer_response(self, o: Offer, trust_entry: tuple | None) -> OfferResponse:
         retailer, trust = trust_entry if trust_entry else (None, None)
         tp = compute_true_price(
             float(o.listed_price),

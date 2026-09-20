@@ -41,3 +41,28 @@ Reliability: 20s timeout, 2 retries with backoff on 429/5xx, "no results" treate
 ## Trust evidence providers
 
 `TrustEvidenceProvider` implementations: `GoogleSearchEvidenceProvider`, `TrustpilotProvider` (optional), `DemoTrustEvidenceProvider`. Curated policy facts in `app/data/retailers.py` are added as `source_type=policy` evidence with source URLs.
+
+## Search-data vendor: SerpApi or SearchApi
+
+Every engine BuyWise uses (Google Shopping, Amazon search and product pages, Google web
+search for trust evidence, Google Lens for photo search) is available from two vendors
+with the same call shape. `app/providers/search_client.py` is the single transport;
+each engine module maps the few parameter and field names that differ.
+
+- `SERPAPI_API_KEY` or `SEARCHAPI_API_KEY`: configure one. With both set,
+  `SEARCH_PROVIDER` (`auto` | `serpapi` | `searchapi`) decides; `auto` prefers SearchApi.
+- Responses are cached in the database (`api_cache`), shared across workers and restarts.
+  The key ignores the vendor, so switching vendors keeps the warm cache.
+- A quota or credential failure opens a circuit breaker for `SEARCH_API_COOLDOWN_SECONDS`.
+  While it is open, searches answer from the catalogue with a plain warning instead of
+  waiting on retries. `/api/v1/admin/status` reports per-engine stats and breaker state.
+- Page views never collect trust evidence inline; only the scheduled job does.
+
+## Scheduled jobs without Celery
+
+`POST /api/v1/internal/jobs/{name}` runs one job (`refresh_prices`, `check_alerts`,
+`assess_new_retailers`, `refresh_trust`, `cleanup`) when called with header
+`X-Cron-Secret` equal to `CRON_SECRET`. `.github/workflows/scheduled-jobs.yml` calls it
+twice a day using the `API_URL` and `CRON_SECRET` repository secrets. Per-run budgets
+(`PRICE_REFRESH_BATCH`, `TRUST_ASSESS_BATCH`) cap what a run may spend on the search API.
+Price history accrues from these refreshes and from lookups; BuyWise never back-fills.

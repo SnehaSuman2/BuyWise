@@ -100,7 +100,9 @@ class GeminiProvider(BaseLLMProvider):
         if not candidates:
             # Safety filters can return no candidate at all.
             reason = (data.get("promptFeedback") or {}).get("blockReason")
-            raise AIProviderError(f"Gemini returned no candidates{f' ({reason})' if reason else ''}")
+            raise AIProviderError(
+                f"Gemini returned no candidates{f' ({reason})' if reason else ''}"
+            )
         parts = (candidates[0].get("content") or {}).get("parts") or []
         text = "".join(p.get("text", "") for p in parts)
         if not text:

@@ -26,7 +26,11 @@ _ROOT_DIR = _BACKEND_DIR.parent
 # (e.g. a live EMAIL_API_KEY) would otherwise make "demo mode" tests call real APIs.
 # conftest.py sets ENVIRONMENT=test in the process environment before this module
 # is first imported, so this check is reliable.
-_ENV_FILES = () if os.environ.get("ENVIRONMENT") == "test" else (str(_ROOT_DIR / ".env"), str(_BACKEND_DIR / ".env"))
+_ENV_FILES = (
+    ()
+    if os.environ.get("ENVIRONMENT") == "test"
+    else (str(_ROOT_DIR / ".env"), str(_BACKEND_DIR / ".env"))
+)
 
 _INSECURE_SECRETS = {
     "",
@@ -95,7 +99,26 @@ class Settings(BaseSettings):
     # drops only merchants identifiably outside India. Set true for maximum purity.
     STRICT_MARKET_FILTER: bool = False
 
-    # --- SerpApi (ONE key for every engine) ---
+    # --- Search data vendor (ONE key for every engine) ---
+    # Either SerpApi or SearchApi supplies Google Shopping, Amazon, Google web search
+    # and Google Lens. Configure one key; with both present, SEARCH_PROVIDER decides
+    # ("auto" prefers SearchApi, whose plans are cheaper per search).
+    SEARCHAPI_API_KEY: str = ""
+    SEARCH_PROVIDER: Literal["auto", "serpapi", "searchapi"] = "auto"
+    # After a quota or credential failure, stop calling the vendor for this long and
+    # answer from the catalogue instead of making every shopper wait on retries.
+    SEARCH_API_COOLDOWN_SECONDS: int = 15 * 60
+    # "auto" keeps third-party responses in the database (shared, restart-proof) or
+    # Redis when configured; "memory" is per process and mainly for tests.
+    CACHE_BACKEND: Literal["auto", "memory"] = "auto"
+    # Shared secret for the scheduled-job endpoint (/internal/jobs). Empty disables it.
+    CRON_SECRET: str = ""
+    # Per-run budgets for background work, so a scheduler cannot burn the search quota.
+    PRICE_REFRESH_BATCH: int = 10
+    TRUST_ASSESS_BATCH: int = 2
+    # Set automatically by Render for web services; used when API_PUBLIC_URL is unset.
+    RENDER_EXTERNAL_URL: str = ""
+
     SERPAPI_API_KEY: str = ""
     SERPAPI_TIMEOUT_SECONDS: float = 20.0
     SERPAPI_MAX_RETRIES: int = 2
@@ -199,8 +222,33 @@ class Settings(BaseSettings):
         return self.ENVIRONMENT == "production"
 
     @property
-    def serpapi_enabled(self) -> bool:
+    def active_search_provider(self) -> str:
+        if self.SEARCH_PROVIDER in ("serpapi", "searchapi"):
+            return self.SEARCH_PROVIDER
+        return "searchapi" if self.SEARCHAPI_API_KEY else "serpapi"
+
+    @property
+    def search_api_enabled(self) -> bool:
+        if self.active_search_provider == "searchapi":
+            return bool(self.SEARCHAPI_API_KEY)
         return bool(self.SERPAPI_API_KEY)
+
+    @property
+    def serpapi_enabled(self) -> bool:
+        """Kept for older call sites: true when any search vendor is configured."""
+        return self.search_api_enabled
+
+    @property
+    def api_public_url(self) -> str:
+        """Public base URL of this API, used for links and uploaded images.
+
+        Falls back to the URL Render assigns when API_PUBLIC_URL was left at its
+        localhost default, so photo search works on Render without extra setup.
+        """
+        url = self.API_PUBLIC_URL.rstrip("/")
+        if url.startswith(("http://localhost", "http://127.")) and self.RENDER_EXTERNAL_URL:
+            return self.RENDER_EXTERNAL_URL.rstrip("/")
+        return url
 
     @property
     def openai_enabled(self) -> bool:
@@ -297,9 +345,10 @@ class Settings(BaseSettings):
     def integration_status(self) -> dict[str, dict]:
         """Non-secret summary of which integrations are live vs mock."""
         return {
-            "serpapi": {
-                "mode": "live" if self.serpapi_enabled else "mock",
-                "configured": self.serpapi_enabled,
+            "search_api": {
+                "mode": "live" if self.search_api_enabled else "mock",
+                "configured": self.search_api_enabled,
+                "provider": self.active_search_provider if self.search_api_enabled else "demo",
             },
             "ai": {
                 "mode": "live" if self.ai_enabled else "mock",

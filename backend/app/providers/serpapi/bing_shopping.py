@@ -15,7 +15,7 @@ class BingShoppingProvider(ProductSearchProvider):
     @property
     def enabled(self) -> bool:
         s = get_settings()
-        return s.serpapi_enabled and s.SERPAPI_ENABLE_BING_SHOPPING
+        return s.search_api_enabled and s.SERPAPI_ENABLE_BING_SHOPPING
 
     async def search_products(
         self, query: str, *, max_results: int = 20, min_price=None, max_price=None

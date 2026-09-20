@@ -68,7 +68,12 @@ class PriceHistoryService:
         if not rows:
             message = "Price history unavailable for this product. BuyWise records prices each time the product is looked up or refreshed."
         elif signal.action == "INSUFFICIENT_DATA":
-            message = "Not enough BuyWise history yet."
+            first = min(o.observed_at for o in obs)
+            message = (
+                f"BuyWise has recorded {len(obs)} price observation(s) for this product "
+                f"since {first.strftime('%d %b %Y')}. History builds each time the product "
+                f"is looked up or refreshed; BuyWise never back-fills prices it did not see."
+            )
         return PriceHistoryResponse(
             product_id=product.id,
             product_name=product.name,

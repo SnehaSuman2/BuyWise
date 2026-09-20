@@ -191,6 +191,28 @@ _MM_RE = re.compile(r"\b(\d{2})\s*mm\b", re.I)
 _GEN_RE = re.compile(
     r"\b(\d+)(?:st|nd|rd|th)\s*gen(?:eration)?\b|\bgen\s*(\d+)\b|\bseries\s*(\d+)\b", re.I
 )
+# Product lines whose generation is a bare number: "iPhone 17", "Galaxy S25 Ultra",
+# "OnePlus 13R", "Pixel 9a", "Redmi Note 14 Pro". These carry no code like
+# WH-1000XM5, so without this the matcher saw "iPhone 13" and "iPhone 17" as the
+# same product with different wording and a search for one returned all of them.
+_LINE_RE = re.compile(
+    r"\b("
+    r"iphone|ipad(?:\s?(?:air|pro|mini))?|macbook\s?(?:air|pro)|apple\s?watch(?:\s?(?:se|ultra))?|"
+    r"airpods(?:\s?pro)?|"
+    r"galaxy\s?(?:z\s?(?:fold|flip)|tab\s?[sa]|note|[samf])|pixel(?:\s?fold)?|"
+    r"oneplus(?:\s?nord(?:\s?ce)?)?|nord(?:\s?ce)?|"
+    r"redmi(?:\s?note)?|poco\s?[xfmc]|realme(?:\s?narzo|\s?gt)?|narzo|iqoo(?:\s?z|\s?neo)?|"
+    r"vivo\s?[tvxy]|moto(?:rola)?\s?(?:g|edge)|nothing\s?phone|cmf\s?phone|xperia|"
+    r"surface\s?(?:pro|laptop|go)|thinkpad\s?[xtlep]|ideapad|vivobook|zenbook|inspiron|xps|"
+    r"pavilion|omen|legion|tuf|rog|playstation|xbox\s?series|kindle|"
+    r"echo\s?(?:dot|show)?|fire\s?tv(?:\s?stick)?"
+    r")"
+    r"\s?(?:series\s?)?"
+    r"(\d{1,3}(?!\s?(?:gb|tb|mm|hz|mah|mp|w|inch|in\b|g\b))[a-z]{0,2})"
+    r"(?:\s?(pro\s?max|pro\s?plus|pro\+|pro|max|plus|ultra|fe|lite|neo|mini|air|edge|se|"
+    r"prime|power|turbo|classic|fold|flip))?\b",
+    re.I,
+)
 _MODEL_TOKEN_RE = re.compile(
     r"\b(?=[A-Za-z0-9-]{4,}\b)(?=[A-Za-z0-9-]*\d)(?=[A-Za-z0-9-]*[A-Za-z])[A-Za-z0-9-]+\b"
 )
@@ -291,9 +313,7 @@ def extract_attributes(
     # headphone comparison. Plurals are matched too ("skins", "wraps").
     # If the shopper is genuinely searching for an accessory, the reference listing is
     # flagged the same way, so like still matches like.
-    attrs.is_accessory = any(
-        re.search(rf"\b{re.escape(w)}s?\b", text) for w in ACCESSORY_WORDS
-    )
+    attrs.is_accessory = any(re.search(rf"\b{re.escape(w)}s?\b", text) for w in ACCESSORY_WORDS)
 
     # RAM / storage
     pair = _PAIR_RE.search(text)
@@ -341,6 +361,14 @@ def extract_attributes(
     gen = _GEN_RE.search(text)
     if gen:
         attrs.generation = next(g for g in gen.groups() if g)
+    line_tokens: list[str] = []
+    line = _LINE_RE.search(text)
+    if line:
+        family, number, tier = line.group(1), line.group(2), line.group(3)
+        if not attrs.generation:
+            attrs.generation = number.lower()
+        token = re.sub(r"[\s+]", "", f"{family}{number}{tier or ''}").lower()
+        line_tokens.append(token)
     chip = _CHIP_RE.search(text)
     if chip:
         attrs.chip = re.sub(r"\s+", " ", chip.group(1).lower())
@@ -355,6 +383,7 @@ def extract_attributes(
         }
     )
     # URL slugs split codes on hyphens ("wh 1000xm5"): rejoin a short alpha prefix with a following code token.
+    # A unit ("256gb", "50mm") is not a code, so "max 256gb" must not become "max256gb".
     words = text.split()
     for i in range(len(words) - 1):
         a, b = words[i], words[i + 1]
@@ -364,10 +393,11 @@ def extract_attributes(
             and re.search(r"\d", b)
             and re.search(r"[a-z]", b)
             and len(b) >= 4
+            and not re.fullmatch(r"\d+(?:\.\d+)?(gb|tb|mm|hz|w|mah|mp|inch|in|g)", b)
             and (a + b) not in attrs.model_tokens
         ):
             attrs.model_tokens.append(a + b)
-    attrs.model_tokens = sorted(set(attrs.model_tokens))
+    attrs.model_tokens = sorted(set(attrs.model_tokens) | set(line_tokens))
     attrs.model = specs.get("model") or (attrs.model_tokens[0] if attrs.model_tokens else None)
 
     # generic tokens for similarity: strip variant words so variants of one product look alike

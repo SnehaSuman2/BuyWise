@@ -15,7 +15,7 @@ class GoogleReverseImageProvider(ImageSearchProvider):
     @property
     def enabled(self) -> bool:
         s = get_settings()
-        return s.serpapi_enabled and s.SERPAPI_ENABLE_GOOGLE_REVERSE_IMAGE
+        return s.search_api_enabled and s.SERPAPI_ENABLE_GOOGLE_REVERSE_IMAGE
 
     async def search_by_image(self, image_url: str) -> ProviderResult[NormalizedListing]:
         settings = get_settings()

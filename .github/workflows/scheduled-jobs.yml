@@ -1,0 +1,43 @@
+# Runs BuyWise background jobs on a schedule by calling the API's internal job
+# endpoint. This replaces a Celery worker for deployments that only run the web
+# service. Two repository secrets are required:
+#   API_URL      e.g. https://buywise-api-vaai.onrender.com
+#   CRON_SECRET  the same value as CRON_SECRET in the API's environment
+#
+# Budgets per run are set in the API (PRICE_REFRESH_BATCH, TRUST_ASSESS_BATCH), so
+# this schedule cannot exhaust the search-API quota on its own.
+name: Scheduled jobs
+
+on:
+  schedule:
+    - cron: "17 */12 * * *"   # twice a day: prices, alerts, retailer assessment
+    - cron: "43 3 * * *"      # once a day: cleanup
+  workflow_dispatch:
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refresh prices, check alerts, assess new retailers
+        if: github.event.schedule != '43 3 * * *'
+        env:
+          API_URL: ${{ secrets.API_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -e
+          for job in refresh_prices check_alerts assess_new_retailers; do
+            echo "== $job"
+            curl --fail --silent --show-error --max-time 600 -X POST \
+              -H "X-Cron-Secret: $CRON_SECRET" \
+              "$API_URL/api/v1/internal/jobs/$job"
+            echo
+          done
+      - name: Cleanup
+        if: github.event.schedule == '43 3 * * *' || github.event_name == 'workflow_dispatch'
+        env:
+          API_URL: ${{ secrets.API_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          curl --fail --silent --show-error --max-time 600 -X POST \
+            -H "X-Cron-Secret: $CRON_SECRET" \
+            "$API_URL/api/v1/internal/jobs/cleanup"

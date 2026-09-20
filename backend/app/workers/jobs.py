@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -36,10 +38,10 @@ async def _tracked_products(db: AsyncSession, limit: int) -> list[Product]:
     return list((await db.execute(stmt)).scalars().all())
 
 
-async def refresh_prices(db: AsyncSession, limit: int = 50) -> dict:
+async def refresh_prices(db: AsyncSession, limit: int | None = None) -> dict:
     """Refresh offers/prices for tracked products (bounded to respect API budgets)."""
     settings = get_settings()
-    products = await _tracked_products(db, limit)
+    products = await _tracked_products(db, limit or settings.PRICE_REFRESH_BATCH)
     service = OfferService(db)
     refreshed = failed = 0
     for product in products:
@@ -97,14 +99,32 @@ async def cleanup(db: AsyncSession) -> dict:
     old_jobs = await db.execute(
         delete(JobRun).where(JobRun.started_at < _now() - timedelta(days=30))
     )
+    from app.core.cache import cache
+
+    cache_rows = await cache.purge_expired()
+    # Photos uploaded for image search only need to exist while Google Lens fetches
+    # them; anything older than a day is left over.
+    uploads_deleted = 0
+    upload_dir = Path(__file__).resolve().parent.parent.parent / "uploads"
+    if upload_dir.is_dir():
+        cutoff = time.time() - 24 * 60 * 60
+        for f in upload_dir.iterdir():
+            try:
+                if f.is_file() and f.stat().st_mtime < cutoff:
+                    f.unlink()
+                    uploads_deleted += 1
+            except OSError:
+                continue
     return {
         "sessions_deleted": expired.rowcount,
         "anonymous_searches_deleted": old_searches.rowcount,
         "job_runs_deleted": old_jobs.rowcount,
+        "expired_cache_rows_deleted": cache_rows,
+        "uploads_deleted": uploads_deleted,
     }
 
 
-async def assess_new_retailers(db: AsyncSession, limit: int = 10) -> dict:
+async def assess_new_retailers(db: AsyncSession, limit: int | None = None) -> dict:
     """Gather trust evidence for merchants that appeared in results but were never
     assessed, so they can graduate from "unverified" to a real score — or be flagged.
 
@@ -113,7 +133,9 @@ async def assess_new_retailers(db: AsyncSession, limit: int = 10) -> dict:
     several SerpApi calls.
     """
     service = TrustService(db)
-    pending = await service.retailers_needing_assessment(limit=limit)
+    pending = await service.retailers_needing_assessment(
+        limit=limit or get_settings().TRUST_ASSESS_BATCH
+    )
     assessed, flagged, failed = 0, 0, 0
     for retailer in pending:
         try:

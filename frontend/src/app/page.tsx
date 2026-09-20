@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Search, Link2, ArrowRight, ShieldCheck, TrendingDown, Bot, BarChart3, Sparkles, Scale, CheckCircle2, FlaskConical, Radio } from "lucide-react";
+import { Search, Link2, ArrowRight, ShieldCheck, TrendingDown, Bot, BarChart3, Sparkles, Scale, CheckCircle2, FlaskConical, Radio, Camera } from "lucide-react";
+import { downscaleImage, PENDING_PHOTO_KEY } from "@/lib/photo";
 import { useMeta } from "@/lib/meta";
 
 const SUGGESTIONS = [
@@ -47,6 +48,20 @@ export default function HomePage() {
     router.push(`/search?q=${encodeURIComponent(query.trim())}`);
   };
 
+  const photoRef = useRef<HTMLInputElement>(null);
+  const handlePhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      const dataUrl = await downscaleImage(file);
+      sessionStorage.setItem(PENDING_PHOTO_KEY, dataUrl);
+      router.push("/search");
+    } catch {
+      router.push("/search?photo=1");
+    }
+  };
+
   return (
     <div className="relative">
       <section className="relative overflow-hidden">
@@ -65,7 +80,9 @@ export default function HomePage() {
               <div className="relative glass-strong rounded-2xl p-2">
                 <div className="flex items-center gap-2">
                   <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-muted/50">{isUrl ? <Link2 className="w-5 h-5 text-indigo-500" /> : <Search className="w-5 h-5 text-muted-foreground" />}</div>
-                  <input type="text" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Product name or paste a retailer URL" className="flex-1 min-w-0 bg-transparent text-lg outline-none placeholder:text-muted-foreground/60" id="search-input" aria-label="Search products" />
+                  <input type="text" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Product name, retailer URL, or a photo" className="flex-1 min-w-0 bg-transparent text-lg outline-none placeholder:text-muted-foreground/60" id="search-input" aria-label="Search products" />
+                  <input ref={photoRef} type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={handlePhoto} className="hidden" aria-hidden="true" tabIndex={-1} />
+                  <button type="button" onClick={() => photoRef.current?.click()} className="p-2.5 rounded-xl hover:bg-muted transition-colors" aria-label="Search by photo" title="Search by photo"><Camera className="w-5 h-5 text-indigo-500" /></button>
                   <button type="submit" className="px-4 sm:px-6 py-2.5 rounded-xl gradient-primary text-white font-medium flex items-center gap-2 hover:shadow-lg hover:shadow-indigo-500/25 transition-all">Search<ArrowRight className="w-4 h-4" /></button>
                 </div>
               </div>

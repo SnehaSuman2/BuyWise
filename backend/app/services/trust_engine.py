@@ -349,7 +349,11 @@ def policy_evidence(retailer_name: str, policies: dict, is_demo: bool = False) -
                 "severity": 0.2,
                 "confidence": 0.85,
                 "claim": f"Operating in India since {established} ({years} years)"
-                + (f", part of {policies['parent_company']}" if policies.get("parent_company") else ""),
+                + (
+                    f", part of {policies['parent_company']}"
+                    if policies.get("parent_company")
+                    else ""
+                ),
                 "url": src,
             }
         )

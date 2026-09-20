@@ -4,6 +4,7 @@ from app.models.affiliate import AffiliateClick
 from app.models.alert import Notification, PriceAlert
 from app.models.base import JSONType, SoftDeleteMixin, TimestampMixin, UUIDMixin, UUIDType
 from app.models.billing import Payment, Subscription, WebhookEvent
+from app.models.cache import ApiCache
 from app.models.community import CommunityReport, ReportFlag
 from app.models.jobs import JobRun
 from app.models.offer import Offer
@@ -17,6 +18,7 @@ from app.models.user import RefreshSession, SavedProduct, User
 
 __all__ = [
     "AffiliateClick",
+    "ApiCache",
     "Notification",
     "PriceAlert",
     "JSONType",

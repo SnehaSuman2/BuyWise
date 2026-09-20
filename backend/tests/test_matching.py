@@ -141,7 +141,9 @@ def test_accessories_hidden_unless_the_shopper_asks_for_them():
     from app.services.search_service import filter_accessories
 
     listings = [
-        NormalizedListing(title="Sony WH-1000XM5 Wireless Noise Cancelling Headphones", price=21990.0),
+        NormalizedListing(
+            title="Sony WH-1000XM5 Wireless Noise Cancelling Headphones", price=21990.0
+        ),
         NormalizedListing(title="Sony WH-1000XM5 Wireless Headphone Skins & Wraps", price=999.0),
         NormalizedListing(title="WC SweatZ XM5 Protective Covers for Sony", price=999.0),
     ]

@@ -41,6 +41,7 @@ class ReviewAnalyzer:
             )
         ).scalar_one_or_none()
         if stored is not None and (stored.positive_themes or stored.negative_themes):
+
             def to_themes(rows, fallback):
                 out = []
                 for row in rows or []:

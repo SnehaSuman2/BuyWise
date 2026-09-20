@@ -23,7 +23,7 @@ from app.models import (
 )
 from app.providers import registry
 from app.providers.llm.openai import STATS as OPENAI_STATS
-from app.providers.serpapi.client import serpapi_stats
+from app.providers.search_client import breaker_status, search_stats
 from app.schemas.community import CommunityReportResponse, ModerationAction
 from app.services.community_service import CommunityService
 
@@ -64,7 +64,8 @@ async def status(db: AsyncSession = Depends(get_db)):
         "environment": s.ENVIRONMENT,
         "integrations": s.integration_status(),
         "providers": registry.provider_status(),
-        "serpapi": serpapi_stats(),
+        "search_api": search_stats(),
+        "search_breaker": breaker_status(),
         "openai": OPENAI_STATS,
         "cache": CACHE_STATS,
         "counts": counts,

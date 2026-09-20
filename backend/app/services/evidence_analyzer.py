@@ -135,7 +135,9 @@ POSITIVE = {
 }
 # Domains whose content is primarily user complaints/reviews (higher relevance, moderate reliability)
 # Query terms that pre-select for negative results regardless of the retailer.
-LEADING_QUERY_RE = re.compile(r"\b(complaint|complaints|scam|fraud|refund|problem|issue|delay)\b", re.I)
+LEADING_QUERY_RE = re.compile(
+    r"\b(complaint|complaints|scam|fraud|refund|problem|issue|delay)\b", re.I
+)
 
 REVIEW_DOMAINS = {
     "consumercomplaints.in": 0.65,

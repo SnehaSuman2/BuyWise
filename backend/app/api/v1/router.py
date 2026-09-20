@@ -11,6 +11,7 @@ from app.api.v1 import (
     auth,
     billing,
     community,
+    internal,
     meta,
     products,
     retailers,
@@ -30,6 +31,7 @@ for r in (
     billing.router,
     affiliate.router,
     community.router,
+    internal.router,
     admin.router,
 ):
     router.include_router(r)

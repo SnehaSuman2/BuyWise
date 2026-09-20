@@ -18,6 +18,7 @@ async def meta():
         "demo_mode": s.demo_mode,
         "ai_mode": "live" if s.ai_enabled else "demo",
         "ai_provider": "gemini" if s.gemini_enabled else ("openai" if s.openai_enabled else "demo"),
+        "search_provider": s.active_search_provider if s.search_api_enabled else "demo",
         "payments_enabled": s.razorpay_enabled,
         "google_auth_enabled": s.google_auth_enabled,
         "image_search_enabled": any(p.name != "demo" for p in registry.image_search_providers()),

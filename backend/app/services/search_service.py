@@ -135,6 +135,8 @@ class SearchService:
         detected_retailer = None
         reference: Candidate | None = None
         reference_product_id: str | None = None
+        ref_product: Product | None = None
+        unavailable_reason: str | None = None
 
         if request.url:
             query_type = "url"
@@ -176,6 +178,7 @@ class SearchService:
             providers_used += meta["providers"]
             warnings += meta["warnings"]
             cached = meta["cached"]
+            unavailable_reason = meta.get("unavailable")
 
         # Keep only merchants that actually sell into India before anything is grouped,
         # matched or persisted — a foreign listing's converted price is not a price the
@@ -209,8 +212,24 @@ class SearchService:
                     -g.reference_match.confidence,
                 )
             )
+        elif query_type == "text":
+            groups, hidden_models = self._filter_to_named_model(groups, query_text)
+            if hidden_models:
+                warnings.append(
+                    f"Hid {hidden_models} product(s) that are a different model from the "
+                    f"one you searched for."
+                )
 
-        results = await self._persist_groups(groups, query_type)
+        results = await self._persist_groups(groups, query_type, reference_product=ref_product)
+        if not results and unavailable_reason and query_type == "text":
+            # The vendor is down or out of quota. Answer from what the catalogue
+            # already knows rather than showing nothing, and say so plainly.
+            results = await self._catalog_fallback(query_text)
+            if results:
+                warnings.append(
+                    "Live retailer search is temporarily unavailable. Showing products "
+                    "BuyWise has seen before; prices may be out of date."
+                )
         # If the URL flow produced a reference product not represented in results, put it first.
         if reference_product_id and all(str(r.id) != reference_product_id for r in results):
             ref = await catalog.load_product(self.db, uuid.UUID(reference_product_id))
@@ -265,6 +284,7 @@ class SearchService:
         self, query: str, min_price, max_price
     ) -> tuple[list[NormalizedListing], dict]:
         providers_used, warnings, listings, cached = [], [], [], False
+        failures: list[str] = []
         for provider in registry.product_search_providers():
             res = await provider.search_products(
                 query, max_results=40, min_price=min_price, max_price=max_price
@@ -273,6 +293,7 @@ class SearchService:
             cached = cached or res.cached
             if not res.ok:
                 warnings.append(f"{provider.engine} temporarily unavailable.")
+                failures.append(res.error or provider.engine)
                 continue
             listings.extend(res.items)
             if len(listings) >= 5:
@@ -286,10 +307,26 @@ class SearchService:
                     listings.extend(res.items)
                 else:
                     warnings.append("Amazon data temporarily unavailable.")
-        return [l for l in listings if l.price], {
+                    failures.append(res.error or "amazon")
+        priced = [l for l in listings if l.price]
+        # Price bounds are applied here for every vendor; only SerpApi's Google
+        # Shopping engine can filter server-side, and even then not exactly.
+        if min_price is not None:
+            priced = [l for l in priced if l.price >= min_price]
+        if max_price is not None:
+            priced = [l for l in priced if l.price <= max_price]
+        unavailable = None
+        if not priced and failures and not listings:
+            unavailable = "; ".join(str(f) for f in failures)[:200]
+            warnings = [
+                "Live retailer search is temporarily unavailable (search provider quota "
+                "or credentials). Results may be incomplete."
+            ]
+        return priced, {
             "providers": providers_used,
             "warnings": warnings,
             "cached": cached,
+            "unavailable": unavailable,
         }
 
     async def _search_by_url(self, url: str):
@@ -328,9 +365,7 @@ class SearchService:
                     source_url=details.source_url,
                     is_demo=details.is_demo,
                 )
-                await catalog.store_review_insights(
-                    self.db, ref_product, details.review_insights
-                )
+                await catalog.store_review_insights(self.db, ref_product, details.review_insights)
                 variant = await catalog.primary_variant(self.db, ref_product)
                 for offer in details.offers:
                     tp = true_price_from_listing(offer)
@@ -353,7 +388,7 @@ class SearchService:
             if not query:
                 raise ValueError("Could not extract a product from that URL")
             reference = Candidate(query)
-        text_listings, meta = await self._search_text(reference.title, None, None)
+        text_listings, meta = await self._search_text(self._fanout_query(reference), None, None)
         listings.extend(text_listings)
         providers_used += meta["providers"]
         warnings += meta["warnings"]
@@ -365,6 +400,74 @@ class SearchService:
             ref_product,
             {"providers": providers_used, "warnings": warnings, "cached": cached},
         )
+
+    @staticmethod
+    def _fanout_query(reference: Candidate) -> str:
+        """A short query for finding the referenced product at other retailers.
+
+        A retailer's own title ("Apple iPhone 16 (128 GB) - Black, 6.1-inch Super
+        Retina XDR, A18 chip...") is far too specific for a marketplace search and
+        returns little or nothing from other stores. Brand, model and storage are
+        what identify the product; the rest is dropped.
+        """
+        attrs = reference.attrs
+        head = re.split(r"\s[-|,(]\s*|\(", attrs.clean_title, maxsplit=1)[0].strip()
+        words = head.split()[:8]
+        query = " ".join(words)
+        if attrs.brand and attrs.brand not in query:
+            query = f"{attrs.brand} {query}"
+        if attrs.storage and attrs.storage.lower() not in query.replace(" ", "").lower():
+            query = f"{query} {attrs.storage}"
+        return query.strip() or reference.title
+
+    @staticmethod
+    def _filter_to_named_model(groups: list[ListingGroup], query_text: str):
+        """Drop result groups for a different model than the one the shopper named.
+
+        "iPhone 17" used to return iPhone 13, 15 and 16 as well, because to a token
+        similarity they are the same words. When the query carries a model or
+        generation, groups whose model conflicts are removed rather than ranked
+        lower: a different model is not an answer to that question at any price.
+        Queries without a model ("wireless headphones") are left alone.
+        """
+        query_ref = Candidate(query_text)
+        if not query_ref.attrs.model_tokens:
+            return groups, 0
+        kept, hidden = [], 0
+        for g in groups:
+            m = match_products(query_ref, g.reference)
+            conflicting = m.match_type == MatchType.UNKNOWN or any(
+                r.startswith("Model code differs") for r in m.reasons
+            )
+            if conflicting:
+                hidden += 1
+                continue
+            g.reference_match = m
+            kept.append(g)
+        kept.sort(
+            key=lambda g: (
+                -(g.reference_match.match_type == MatchType.EXACT),
+                -g.reference_match.confidence,
+            )
+        )
+        # The badge on a card is for URL and photo searches, where the shopper gave
+        # a specific product to match against. For a typed query it is noise.
+        for g in kept:
+            g.reference_match = None
+        return kept, hidden
+
+    async def _catalog_fallback(self, query_text: str) -> list[ProductSearchResult]:
+        from sqlalchemy import select
+
+        words = [w for w in re.findall(r"[a-z0-9]+", query_text.lower()) if len(w) > 1][:6]
+        if not words:
+            return []
+        stmt = select(Product)
+        for w in words:
+            stmt = stmt.where(Product.name.ilike(f"%{w}%"))
+        stmt = stmt.order_by(Product.updated_at.desc()).limit(24)
+        products = (await self.db.execute(stmt)).scalars().all()
+        return [await self._result_for_product(p, None) for p in products]
 
     async def _search_by_image(self, image_url: str) -> tuple[list[NormalizedListing], dict]:
         providers_used, warnings, listings, cached = [], [], [], False
@@ -392,9 +495,8 @@ class SearchService:
         from pathlib import Path
 
         settings = self.settings
-        if settings.API_PUBLIC_URL.startswith(
-            "http://localhost"
-        ) or settings.API_PUBLIC_URL.startswith("http://127."):
+        public_url = settings.api_public_url
+        if public_url.startswith(("http://localhost", "http://127.")):
             return None
         try:
             raw = base64.b64decode(image_base64.split(",")[-1], validate=True)
@@ -415,39 +517,61 @@ class SearchService:
         upload_dir = Path(__file__).resolve().parent.parent.parent / "uploads"
         upload_dir.mkdir(exist_ok=True)
         (upload_dir / name).write_bytes(raw)
-        return f"{settings.API_PUBLIC_URL.rstrip('/')}/uploads/{name}"
+        return f"{public_url}/uploads/{name}"
 
     # ------------------------------------------------------------ persistence
     async def _persist_groups(
-        self, groups: list[ListingGroup], query_type: str
+        self,
+        groups: list[ListingGroup],
+        query_type: str,
+        reference_product: Product | None = None,
     ) -> list[ProductSearchResult]:
         results: list[ProductSearchResult] = []
         seen: dict[uuid.UUID, ListingGroup] = {}
-        for group in groups[:40]:
+        for group in groups[:24]:
             ref_listing = group.listings[0][0]
             identifiers = dict(group.reference.identifiers)
             for listing, _ in group.listings:
                 for k, v in catalog.clean_identifiers(listing.identifiers).items():
                     identifiers.setdefault(k, v)
-            product = await catalog.upsert_product(
-                self.db,
-                group.title,
-                attrs=group.reference.attrs,
-                identifiers=identifiers,
-                brand=ref_listing.brand,
-                category=ref_listing.category,
-                image_url=next((l.image_url for l, _ in group.listings if l.image_url), None),
-                source_provider=ref_listing.source_provider,
-                source_url=ref_listing.url,
-                is_demo=all(l.is_demo for l, _ in group.listings),
+            attached = (
+                reference_product is not None
+                and group.reference_match is not None
+                and group.reference_match.match_type == MatchType.EXACT
+                and group.reference_match.confidence >= 0.8
             )
+            if attached:
+                # A link search found this same product at another retailer. Its
+                # listings are offers on the referenced product, not a new product:
+                # that is the whole point of pasting a link. Only exact matches
+                # attach; a different variant stays its own product so a 128 GB
+                # price is never shown against a 256 GB link.
+                product = reference_product
+            else:
+                product = await catalog.upsert_product(
+                    self.db,
+                    group.title,
+                    attrs=group.reference.attrs,
+                    identifiers=identifiers,
+                    brand=ref_listing.brand,
+                    category=ref_listing.category,
+                    image_url=next((l.image_url for l, _ in group.listings if l.image_url), None),
+                    source_provider=ref_listing.source_provider,
+                    source_url=ref_listing.url,
+                    is_demo=all(l.is_demo for l, _ in group.listings),
+                )
             group.product = product
             variant = await catalog.primary_variant(self.db, product)
             for listing, match in group.listings:
                 tp = true_price_from_listing(listing)
                 if tp:
                     await catalog.record_offer(
-                        self.db, product, listing, tp, match, variant=variant
+                        self.db,
+                        product,
+                        listing,
+                        tp,
+                        group.reference_match if attached else match,
+                        variant=variant,
                     )
             # Several listing groups can resolve to the same stored product (a group
             # whose title differs but whose identifiers/canonical key match an existing

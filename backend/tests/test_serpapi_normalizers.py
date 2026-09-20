@@ -155,7 +155,9 @@ def test_amazon_review_insights_normalization():
             }
         }
     }
-    insights = normalize_review_insights(data, {"reviews": 17217, "rating": 4.4}, "B0X", "amazon.in")
+    insights = normalize_review_insights(
+        data, {"reviews": 17217, "rating": 4.4}, "B0X", "amazon.in"
+    )
     assert insights.total_reviews == 17217 and insights.average_rating == 4.4
     assert [t.theme for t in insights.themes] == ["Sound quality", "Value for money"]
     assert insights.themes[0].positive_mentions == 205
@@ -167,7 +169,9 @@ def test_implausible_average_rating_is_dropped():
     from app.providers.serpapi.amazon_product import normalize_review_insights
 
     data = {"reviews_information": {"summary": {"text": "Good", "insights": []}}}
-    implausible = normalize_review_insights(data, {"reviews": 17217, "rating": 5.0}, "B0X", "amazon.in")
+    implausible = normalize_review_insights(
+        data, {"reviews": 17217, "rating": 5.0}, "B0X", "amazon.in"
+    )
     assert implausible.average_rating is None
     # A perfect score on a small corpus is plausible and kept.
     small = normalize_review_insights(data, {"reviews": 7, "rating": 5.0}, "B0X", "amazon.in")

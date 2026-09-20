@@ -77,9 +77,10 @@ async def test_history_honest_when_insufficient(client, demo_product):
     assert r.status_code == 200
     data = r.json()
     # A fresh search yields one observation per retailer today → not enough history.
-    assert data["signal"]["action"] == "INSUFFICIENT_DATA" and "Not enough BuyWise history" in (
-        data["message"] or ""
-    )
+    # The message says how much BuyWise has actually seen and that it never back-fills.
+    assert data["signal"]["action"] == "INSUFFICIENT_DATA"
+    assert "price observation" in (data["message"] or "")
+    assert "never back-fills" in data["message"]
     assert data["stats"] is None or data["stats"]["span_days"] < 7
 
 

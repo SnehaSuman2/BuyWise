@@ -1,4 +1,4 @@
-"""SerpApi Google Search engine — organic web results as evidence items."""
+"""Google web search — organic results as evidence items (SerpApi or SearchApi)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from app.core.config import get_settings
 from app.providers.base import EvidenceItem, ProviderResult, WebSearchProvider
-from app.providers.serpapi.client import SerpApiError, get_serpapi_client
+from app.providers.search_client import SearchApiError, get_search_client
 
 
 def _parse_date(value) -> datetime | None:
@@ -37,19 +37,22 @@ def normalize_organic_result(item: dict, query: str) -> EvidenceItem | None:
 
 
 class GoogleSearchProvider(WebSearchProvider):
-    name = "serpapi"
     engine = "google"
+
+    @property
+    def name(self) -> str:
+        return get_search_client().provider
 
     @property
     def enabled(self) -> bool:
         s = get_settings()
-        return s.serpapi_enabled and s.SERPAPI_ENABLE_GOOGLE_SEARCH
+        return s.search_api_enabled and s.SERPAPI_ENABLE_GOOGLE_SEARCH
 
     async def search_web(
         self, query: str, *, max_results: int = 10
     ) -> ProviderResult[EvidenceItem]:
         settings = get_settings()
-        client = get_serpapi_client()
+        client = get_search_client()
         params = {
             "q": query,
             "gl": settings.SERPAPI_COUNTRY,
@@ -60,7 +63,7 @@ class GoogleSearchProvider(WebSearchProvider):
             data = await client.search(
                 self.engine, params, cache_ttl=settings.CACHE_TTL_TRUST_SECONDS
             )
-        except SerpApiError as exc:
+        except SearchApiError as exc:
             return ProviderResult.failure(self.name, self.engine, str(exc))
         items = []
         for raw in data.get("organic_results") or []:

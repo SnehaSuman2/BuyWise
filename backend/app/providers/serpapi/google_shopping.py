@@ -1,4 +1,4 @@
-"""SerpApi Google Shopping engine → NormalizedListing."""
+"""Google Shopping engine → NormalizedListing (SerpApi or SearchApi transport)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import logging
 
 from app.core.config import get_settings
 from app.providers.base import NormalizedListing, ProductSearchProvider, ProviderResult, parse_price
-from app.providers.serpapi.client import SerpApiError, get_serpapi_client
+from app.providers.search_client import SearchApiError, get_search_client
 from app.providers.serpapi.common import (
     availability_from_text,
     delivery_days_from_text,
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 def normalize_shopping_result(
-    item: dict, *, engine: str = "google_shopping"
+    item: dict, *, engine: str = "google_shopping", provider: str = "serpapi"
 ) -> NormalizedListing | None:
     title = (item.get("title") or "").strip()
     if not title:
@@ -56,7 +56,8 @@ def normalize_shopping_result(
         price=price,
         original_price=original if original and price and original > price else None,
         currency="INR",
-        retailer_name=item.get("source"),
+        # SerpApi names the merchant "source"; SearchApi names it "seller".
+        retailer_name=item.get("source") or item.get("seller"),
         retailer_domain=domain_of(link)
         if link and "google." not in (domain_of(link) or "")
         else None,
@@ -72,51 +73,56 @@ def normalize_shopping_result(
         rating_count=reviews_of(item.get("reviews")),
         snippet=item.get("snippet"),
         identifiers=identifiers,
-        source_provider="serpapi",
+        source_provider=provider,
         source_engine=engine,
     )
 
 
 class GoogleShoppingProvider(ProductSearchProvider):
-    name = "serpapi"
     engine = "google_shopping"
+
+    @property
+    def name(self) -> str:
+        return get_search_client().provider
 
     @property
     def enabled(self) -> bool:
         s = get_settings()
-        return s.serpapi_enabled and s.SERPAPI_ENABLE_GOOGLE_SHOPPING
+        return s.search_api_enabled and s.SERPAPI_ENABLE_GOOGLE_SHOPPING
 
     async def search_products(
         self, query: str, *, max_results: int = 20, min_price=None, max_price=None
     ) -> ProviderResult[NormalizedListing]:
         settings = get_settings()
-        client = get_serpapi_client()
-        params = {
+        client = get_search_client()
+        params: dict = {
             "q": query,
             "gl": settings.SERPAPI_COUNTRY,
             "hl": settings.SERPAPI_LANGUAGE,
             "location": "India",
-            "num": min(max(max_results, 10), 40),
         }
-        # Google Shopping price filters (tbs) — only set when provided.
-        tbs = []
-        if min_price is not None:
-            tbs.append(f"ppr_min:{int(min_price)}")
-        if max_price is not None:
-            tbs.append(f"ppr_max:{int(max_price)}")
-        if tbs:
-            params["tbs"] = "mr:1,price:1," + ",".join(tbs)
+        if client.provider == "serpapi":
+            params["num"] = min(max(max_results, 10), 40)
+            # Google Shopping price filters (tbs), SerpApi only; the search layer
+            # applies the same bounds locally for every vendor.
+            tbs = []
+            if min_price is not None:
+                tbs.append(f"ppr_min:{int(min_price)}")
+            if max_price is not None:
+                tbs.append(f"ppr_max:{int(max_price)}")
+            if tbs:
+                params["tbs"] = "mr:1,price:1," + ",".join(tbs)
         try:
             data = await client.search(
                 self.engine, params, cache_ttl=settings.CACHE_TTL_SEARCH_SECONDS
             )
-        except SerpApiError as exc:
+        except SearchApiError as exc:
             return ProviderResult.failure(self.name, self.engine, str(exc))
         items = []
         for raw in (data.get("shopping_results") or []) + (
             data.get("inline_shopping_results") or []
         ):
-            listing = normalize_shopping_result(raw)
+            listing = normalize_shopping_result(raw, provider=client.provider)
             if listing:
                 items.append(listing)
         return ProviderResult(

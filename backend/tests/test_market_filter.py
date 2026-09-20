@@ -81,8 +81,8 @@ def test_non_strict_keeps_unknown_merchants(monkeypatch):
     monkeypatch.setattr(get_settings(), "STRICT_MARKET_FILTER", False)
     listings = [
         _listing("amazon.in", "Amazon.in"),
-        _listing("wafuu.com", "wafuu.com"),          # unknown -> kept when lenient
-        _listing("empire.co.tz", "Empire Online"),   # foreign -> still excluded
+        _listing("wafuu.com", "wafuu.com"),  # unknown -> kept when lenient
+        _listing("empire.co.tz", "Empire Online"),  # foreign -> still excluded
     ]
     kept, excluded, _ = filter_to_market(listings)
     assert [listing.retailer_name for listing in kept] == ["Amazon.in", "wafuu.com"]

@@ -32,6 +32,8 @@ class RedactingFilter(logging.Filter):
             v
             for v in (
                 s.SERPAPI_API_KEY,
+                s.SEARCHAPI_API_KEY,
+                s.CRON_SECRET,
                 s.OPENAI_API_KEY,
                 s.RAZORPAY_KEY_SECRET,
                 s.RAZORPAY_WEBHOOK_SECRET,

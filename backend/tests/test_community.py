@@ -6,7 +6,9 @@ BODY = "Ordered on 2 September, arrived sealed and genuine four days later. Retu
 
 
 @pytest.mark.asyncio
-async def test_report_is_not_public_until_approved(client, auth_headers, admin_headers, demo_product):
+async def test_report_is_not_public_until_approved(
+    client, auth_headers, admin_headers, demo_product
+):
     created = await client.post(
         "/api/v1/community/reports",
         headers=auth_headers,
@@ -32,7 +34,9 @@ async def test_report_is_not_public_until_approved(client, auth_headers, admin_h
 
 
 @pytest.mark.asyncio
-async def test_rejected_report_never_becomes_public(client, auth_headers, admin_headers, demo_product):
+async def test_rejected_report_never_becomes_public(
+    client, auth_headers, admin_headers, demo_product
+):
     report = (
         await client.post(
             "/api/v1/community/reports",
@@ -165,7 +169,9 @@ async def test_flagging_is_once_per_user_and_queue_shows_pending(
 
 
 @pytest.mark.asyncio
-async def test_mine_returns_only_the_callers_reports(client, auth_headers, admin_headers, demo_product):
+async def test_mine_returns_only_the_callers_reports(
+    client, auth_headers, admin_headers, demo_product
+):
     await client.post(
         "/api/v1/community/reports",
         headers=auth_headers,
