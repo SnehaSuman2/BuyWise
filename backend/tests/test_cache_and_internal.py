@@ -46,3 +46,34 @@ async def test_internal_jobs_require_the_cron_secret(client, monkeypatch):
     assert ok.status_code == 200, ok.text
     assert ok.json()["job"] == "cleanup" and ok.json()["status"] == "success"
     assert "expired_cache_rows_deleted" in ok.json()
+
+
+@pytest.mark.asyncio
+async def test_cleanup_removes_old_uploads_but_keeps_dotfiles(client, monkeypatch, tmp_path):
+    import os
+    import time
+    from pathlib import Path
+
+    from app.workers import jobs
+
+    upload_dir = Path(jobs.__file__).resolve().parent.parent.parent / "uploads"
+    upload_dir.mkdir(exist_ok=True)
+    keep = upload_dir / ".gitkeep"
+    keep.touch()
+    old = upload_dir / "old-test-upload.jpg"
+    old.write_bytes(b"\xff\xd8test")
+    two_days_ago = time.time() - 2 * 24 * 60 * 60
+    os.utime(old, (two_days_ago, two_days_ago))
+    os.utime(keep, (two_days_ago, two_days_ago))
+    fresh = upload_dir / "fresh-test-upload.jpg"
+    fresh.write_bytes(b"\xff\xd8test")
+    try:
+        monkeypatch.setattr(get_settings(), "CRON_SECRET", "s3cret-value")
+        r = await client.post(
+            "/api/v1/internal/jobs/cleanup", headers={"X-Cron-Secret": "s3cret-value"}
+        )
+        assert r.status_code == 200 and r.json()["uploads_deleted"] >= 1
+        assert keep.exists() and fresh.exists() and not old.exists()
+    finally:
+        fresh.unlink(missing_ok=True)
+        old.unlink(missing_ok=True)

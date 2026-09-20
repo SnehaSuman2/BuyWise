@@ -109,6 +109,8 @@ async def cleanup(db: AsyncSession) -> dict:
     if upload_dir.is_dir():
         cutoff = time.time() - 24 * 60 * 60
         for f in upload_dir.iterdir():
+            if f.name.startswith("."):
+                continue  # .gitkeep and the like are not uploads
             try:
                 if f.is_file() and f.stat().st_mtime < cutoff:
                     f.unlink()
