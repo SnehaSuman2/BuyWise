@@ -6,6 +6,7 @@ import { ShieldCheck, ExternalLink, ChevronDown, ChevronUp, Info, Store } from "
 import VerificationBadge from "@/components/trust/VerificationBadge";
 import { formatPrice, getTrustColor, matchBadgeClass, formatRelativeTime } from "@/lib/utils";
 import type { OfferComparison, Offer } from "@/lib/types";
+import { track } from "@/lib/analytics";
 
 function PriceBreakdown({ o }: { o: Offer }) {
   const p = o.price;
@@ -92,7 +93,7 @@ export default function OffersTable({ comparison }: { comparison: OfferCompariso
                   <td className="py-3 px-4 text-center hidden lg:table-cell text-muted-foreground text-xs">{o.delivery_days !== null && o.delivery_days !== undefined ? `${o.delivery_days} day${o.delivery_days === 1 ? "" : "s"}` : o.delivery_text || "—"}</td>
                   <td className="py-3 px-2 text-right whitespace-nowrap">
                     <button onClick={() => setOpen(isOpen ? null : o.id)} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground" aria-label="Show price breakdown" aria-expanded={isOpen}>{isOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}</button>
-                    <a href={o.go_url} target="_blank" rel="noopener noreferrer sponsored" className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-indigo-500/10 text-indigo-500 text-xs font-medium hover:bg-indigo-500/20 transition-colors ml-1">Visit <ExternalLink className="w-3 h-3" /></a>
+                    <a href={o.go_url} target="_blank" rel="noopener noreferrer sponsored" onClick={() => track("retailer_click", { retailer: o.retailer?.name, product_id: comparison.product_id, match_type: o.match?.match_type })} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-indigo-500/10 text-indigo-500 text-xs font-medium hover:bg-indigo-500/20 transition-colors ml-1">Visit <ExternalLink className="w-3 h-3" /></a>
                   </td>
                 </tr>
                 {isOpen && (

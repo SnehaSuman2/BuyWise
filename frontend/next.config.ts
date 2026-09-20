@@ -24,6 +24,10 @@ const connectSrc = [
   "https://accounts.google.com",
   "https://api.razorpay.com",
   "https://lumberjack.razorpay.com",
+  // Google Analytics 4 (only loaded when NEXT_PUBLIC_GA_MEASUREMENT_ID is set)
+  "https://*.google-analytics.com",
+  "https://*.analytics.google.com",
+  "https://*.googletagmanager.com",
   ...(isDev ? ["http://localhost:8000", "http://127.0.0.1:8000"] : []),
 ];
 
@@ -36,7 +40,7 @@ const securityHeaders = [
     key: "Content-Security-Policy",
     value: [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' https://accounts.google.com https://checkout.razorpay.com",
+      "script-src 'self' 'unsafe-inline' https://accounts.google.com https://checkout.razorpay.com https://www.googletagmanager.com",
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com",
       "font-src 'self' https://fonts.gstatic.com",
       "img-src 'self' data: https:",

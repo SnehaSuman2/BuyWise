@@ -7,6 +7,7 @@ import { Eye, EyeOff, Sparkles } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { ApiError } from "@/lib/api";
 import GoogleSignInButton from "@/components/ui/GoogleSignInButton";
+import { track } from "@/lib/analytics";
 
 function SignupForm() {
   const { register, loginWithGoogle } = useAuth();
@@ -24,9 +25,9 @@ function SignupForm() {
     e.preventDefault();
     if (form.password !== form.confirm) { setError("Passwords do not match"); return; }
     setBusy(true); setError("");
-    try { await register({ email: form.email, username: form.username, password: form.password }); router.push(safeNext); } catch (err) { setError((err as ApiError).message); } finally { setBusy(false); }
+    try { await register({ email: form.email, username: form.username, password: form.password }); track("sign_up", { method: "password" }); router.push(safeNext); } catch (err) { setError((err as ApiError).message); } finally { setBusy(false); }
   };
-  const handleGoogle = async (token: string) => { try { await loginWithGoogle(token); router.push(safeNext); } catch (err) { setError((err as ApiError).message); } };
+  const handleGoogle = async (token: string) => { try { await loginWithGoogle(token); track("sign_up", { method: "google" }); router.push(safeNext); } catch (err) { setError((err as ApiError).message); } };
 
   return (
     <form onSubmit={handleSubmit} className="glass rounded-2xl p-6 space-y-4">

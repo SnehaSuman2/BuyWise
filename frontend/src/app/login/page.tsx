@@ -7,6 +7,7 @@ import { Eye, EyeOff, Sparkles } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { ApiError } from "@/lib/api";
 import GoogleSignInButton from "@/components/ui/GoogleSignInButton";
+import { track } from "@/lib/analytics";
 
 function LoginForm() {
   const { login, loginWithGoogle } = useAuth();
@@ -22,11 +23,11 @@ function LoginForm() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault(); setBusy(true); setError("");
-    try { await login(email, password); router.push(safeNext); } catch (err) { setError((err as ApiError).message); } finally { setBusy(false); }
+    try { await login(email, password); track("login", { method: "password" }); router.push(safeNext); } catch (err) { setError((err as ApiError).message); } finally { setBusy(false); }
   };
   const handleGoogle = async (token: string) => {
     setError("");
-    try { await loginWithGoogle(token); router.push(safeNext); } catch (err) { setError((err as ApiError).message); }
+    try { await loginWithGoogle(token); track("login", { method: "google" }); router.push(safeNext); } catch (err) { setError((err as ApiError).message); }
   };
 
   return (

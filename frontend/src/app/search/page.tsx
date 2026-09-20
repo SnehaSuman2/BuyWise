@@ -11,6 +11,7 @@ import Spinner from "@/components/ui/Spinner";
 import ErrorBox from "@/components/ui/ErrorBox";
 import type { ProductSearchResult, SearchResponse } from "@/lib/types";
 import { downscaleImage, PENDING_PHOTO_KEY } from "@/lib/photo";
+import { track } from "@/lib/analytics";
 
 function ProductCard({ product }: { product: ProductSearchResult }) {
   return (
@@ -66,6 +67,7 @@ function SearchContent() {
       try {
         const res = await api.search(isUrl ? { url: q, sort_by: sort, page_size: 24 } : { query: q, sort_by: sort, page_size: 24 });
         if (!cancelled) setData(res);
+        if (!cancelled) track("search", { query_type: res.query_type, search_term: isUrl ? undefined : q, results: res.total_results, data_mode: res.meta.data_mode });
       } catch (e) {
         if (!cancelled) setError((e as ApiError).message);
       } finally {
@@ -82,6 +84,7 @@ function SearchContent() {
     try {
       const res = await api.search({ image_base64: dataUrl, page_size: 24 });
       setPhotoData(res);
+      track("search", { query_type: "image", results: res.total_results, data_mode: res.meta.data_mode });
     } catch (e) {
       setError((e as ApiError).message);
     } finally {

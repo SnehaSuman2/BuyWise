@@ -9,6 +9,7 @@ import { formatRelativeTime } from "@/lib/utils";
 import Spinner from "@/components/ui/Spinner";
 import ErrorBox from "@/components/ui/ErrorBox";
 import type { CommunityReport, ReportType } from "@/lib/types";
+import { track } from "@/lib/analytics";
 
 const PRODUCT_TYPES: { value: ReportType; label: string }[] = [
   { value: "purchase", label: "Buying experience" },
@@ -107,6 +108,7 @@ export default function CommunityReviews({
         rating: form.rating || undefined,
         order_reference: form.order_reference.trim() || undefined,
       });
+      track("community_review_submitted", { subject: productId ? "product" : "retailer", report_type: form.report_type });
       setSubmitted(true);
       setOpen(false);
       setForm({ report_type: "purchase", title: "", body: "", rating: 0, order_reference: "" });

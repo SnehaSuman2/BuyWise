@@ -3,6 +3,7 @@ import "./globals.css";
 import Header from "@/components/layout/Header";
 import Footer from "@/components/layout/Footer";
 import DemoBanner from "@/components/layout/DemoBanner";
+import Analytics from "@/components/layout/Analytics";
 import { AuthProvider } from "@/lib/auth";
 import { MetaProvider } from "@/lib/meta";
 
@@ -31,6 +32,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <Footer />
           </AuthProvider>
         </MetaProvider>
+        <Analytics />
       </body>
     </html>
   );
