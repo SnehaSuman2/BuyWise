@@ -31,7 +31,12 @@ logger = logging.getLogger(__name__)
 INTENT_SYSTEM = (
     "Extract shopping intent from the user's message as JSON with keys: kind (product_search|compare|where_to_buy|buy_timing|seller_trust|unknown), "
     "product_query (string or null), budget_max (number in INR or null), budget_min, brands (list), features (list), compare_items (list), retailer (string or null), priority (price|trust|speed|value|null). "
-    "Interpret Indian shorthand like '25k' as 25000 and '1.2 lakh' as 120000."
+    "Interpret Indian shorthand like '25k' as 25000 and '1.2 lakh' as 120000. "
+    "product_query is the product the person means, with obvious typos corrected "
+    "('ihpone 17' is 'iPhone 17') and every model number or generation kept "
+    "('iPhone 17', 'Galaxy S25 Ultra', 'WH-1000XM5'). A model number is never a budget: "
+    "only an amount of money is a budget. Leave out intent words such as 'should I buy', "
+    "'right now', 'best place to buy'."
 )
 ANSWER_SYSTEM = (
     "You are BuyWise's shopping agent. Answer the user's question using ONLY the structured data provided. Be concise (max 160 words), "
@@ -142,16 +147,166 @@ def heuristic_intent(query: str) -> AgentIntent:
         if name in q:
             intent.retailer = name
             break
-    cleaned = re.sub(
-        r"\b(best|good|top|find me|find|show me|recommend|which|what|is|the|for|a|an|me|should|i|buy|now|where|to|under|below|less than|upto|up to|within|budget|please|cheapest|trustworthy|seller|retailer|now)\b",
-        " ",
-        q,
-    )
-    cleaned = re.sub(r"(₹|rs\.?|inr)?\s*[\d.,]+\s*(k|thousand|lakh|lac|l)?\b", " ", cleaned)
-    cleaned = re.sub(r"[^a-z0-9\- ]", " ", cleaned)
-    cleaned = re.sub(r"\s+", " ", cleaned).strip()
-    intent.product_query = cleaned or None
+    intent.product_query = product_query_from(q, budget_match=m)
     return intent
+
+
+# Whole phrases that state intent rather than name a product. Removed before words,
+# so "right now" goes as a unit and "right" cannot survive as a product word.
+_INTENT_PHRASES = (
+    r"or should i wait",
+    r"should i wait",
+    r"should i buy",
+    r"is it a good time to buy",
+    r"good time to buy",
+    r"is now a good time",
+    r"right now",
+    r"right time",
+    r"best place to buy",
+    r"cheapest place to buy",
+    r"where should i buy",
+    r"where to buy",
+    r"where can i buy",
+    r"price drop",
+    r"buy now",
+    r"find me",
+    r"show me",
+    r"less than",
+    r"up to",
+)
+_INTENT_WORDS = (
+    "best",
+    "good",
+    "top",
+    "find",
+    "recommend",
+    "which",
+    "what",
+    "is",
+    "the",
+    "for",
+    "a",
+    "an",
+    "me",
+    "should",
+    "i",
+    "buy",
+    "now",
+    "where",
+    "to",
+    "under",
+    "below",
+    "upto",
+    "within",
+    "budget",
+    "please",
+    "cheapest",
+    "trustworthy",
+    "seller",
+    "retailer",
+    "wait",
+    "or",
+    "place",
+    "time",
+    "today",
+    "currently",
+    "worth",
+    "it",
+    "get",
+    "of",
+    "in",
+    "at",
+    "my",
+    "can",
+    "do",
+    "want",
+    "need",
+    "looking",
+    "purchase",
+)
+# Product words a shopper types in a hurry. A token within one edit of one of these
+# is taken to mean it ("ihpone" is "iphone"); anything longer than one edit is left alone.
+_PRODUCT_WORDS = (
+    "iphone",
+    "ipad",
+    "macbook",
+    "airpods",
+    "apple",
+    "samsung",
+    "galaxy",
+    "pixel",
+    "oneplus",
+    "redmi",
+    "xiaomi",
+    "realme",
+    "vivo",
+    "oppo",
+    "motorola",
+    "nothing",
+    "sony",
+    "bose",
+    "boat",
+    "jbl",
+    "dell",
+    "lenovo",
+    "asus",
+    "acer",
+    "playstation",
+    "xbox",
+    "kindle",
+    "laptop",
+    "phone",
+    "headphones",
+    "earbuds",
+    "watch",
+    "camera",
+    "television",
+    "refrigerator",
+    "washing",
+)
+
+
+def _fix_typo(word: str) -> str | None:
+    """Correct a product word typed in a hurry; drop an intent word typed in a hurry.
+
+    "ihpone" becomes "iphone"; "rigth" (from "rigth now") is an intent word and goes.
+    Returns None for a word to drop.
+    """
+    import difflib
+
+    if word in _PRODUCT_WORDS or any(ch.isdigit() for ch in word):
+        return word
+    if len(word) >= 5:
+        close = difflib.get_close_matches(word, _PRODUCT_WORDS, n=1, cutoff=0.8)
+        if close:
+            return close[0]
+    if len(word) >= 4 and difflib.get_close_matches(
+        word, _INTENT_WORDS + ("right", "should", "would"), n=1, cutoff=0.8
+    ):
+        return None
+    return word
+
+
+def product_query_from(q: str, budget_match: re.Match | None = None) -> str | None:
+    """The product the shopper means, with intent words and the budget removed.
+
+    Numbers are kept: "17" in "iphone 17" and "1000xm5" in "wh-1000xm5" are the
+    product. The old version stripped every number as if it were money, which sent
+    "iphone" to search and brought back every generation of iPhone. Only the budget
+    phrase itself and amounts with a currency mark or a k/lakh suffix are removed.
+    """
+    text = q
+    if budget_match:
+        text = text[: budget_match.start()] + " " + text[budget_match.end() :]
+    text = re.sub(r"(₹|rs\.?|inr)\s*[\d.,]+\s*(k|thousand|lakh|lac|l)?\b", " ", text)
+    text = re.sub(r"\b[\d.,]+\s*(k|thousand|lakh|lac)\b", " ", text)
+    for phrase in _INTENT_PHRASES:
+        text = re.sub(rf"\b{phrase}\b", " ", text)
+    text = re.sub(r"[^a-z0-9\-+ ]", " ", text)
+    words = [w for w in text.split() if w not in _INTENT_WORDS]
+    fixed = [_fix_typo(w) for w in words]
+    cleaned = " ".join(w for w in fixed if w).strip()
+    return cleaned or None
 
 
 class ShoppingAgent:
@@ -184,10 +339,25 @@ class ShoppingAgent:
                 )
                 else base.kind
             )
+            from app.services.product_normalizer import extract_attributes
+
+            llm_query = (data.get("product_query") or "").strip() or None
+            product_query = llm_query or base.product_query
+            # If the model dropped the generation the shopper typed, keep ours.
+            if (
+                llm_query
+                and base.product_query
+                and extract_attributes(base.product_query).model_tokens
+                and not extract_attributes(llm_query).model_tokens
+            ):
+                product_query = base.product_query
+            budget_max = float(data["budget_max"]) if data.get("budget_max") else base.budget_max
+            if budget_max is not None and budget_max < 100:
+                budget_max = base.budget_max  # a model number, not money
             return AgentIntent(
                 kind=kind,
-                product_query=data.get("product_query") or base.product_query,
-                budget_max=float(data["budget_max"]) if data.get("budget_max") else base.budget_max,
+                product_query=product_query,
+                budget_max=budget_max,
                 budget_min=float(data["budget_min"]) if data.get("budget_min") else None,
                 brands=[str(b).lower() for b in data.get("brands") or []] or base.brands,
                 features=[str(f) for f in data.get("features") or []],
@@ -384,7 +554,11 @@ class ShoppingAgent:
                 f"{trust.get('subject_name')}: BuyWise Trust Score {score if score is not None else 'not available'}/100, risk {trust.get('risk_level')}, confidence {trust.get('confidence_level')}. {trust.get('explanation', '')}"
             )
         if not products and not trust:
-            return "I couldn't find matching products for that request. Try a more specific product name or a different budget."
+            asked = f' for "{intent.product_query}"' if intent.product_query else ""
+            return (
+                f"I couldn't find any listings{asked} right now. Try the exact product name "
+                f"with its model, or paste a link to the product page."
+            )
         if products:
             lines.append(
                 f"I found {len(products)} option{'s' if len(products) != 1 else ''}"
@@ -410,7 +584,12 @@ class ShoppingAgent:
                 )
                 line = f"{i}. {p.product.name}"
                 if best:
-                    line += f" — best overall from {best.retailer_name} at ₹{best.price:,.0f} (trust {best.trust_score if best.trust_score is not None else 'n/a'}/100)."
+                    trust_text = (
+                        f"trust {best.trust_score}/100"
+                        if best.trust_score is not None
+                        else "seller not yet rated"
+                    )
+                    line += f" — best overall from {best.retailer_name} at ₹{best.price:,.0f} ({trust_text})."
                     if cheapest and cheapest.offer_id != best.offer_id:
                         line += f" Cheapest is {cheapest.retailer_name} at ₹{cheapest.price:,.0f}."
                     if not best.final_price_known:
