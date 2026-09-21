@@ -261,3 +261,89 @@ def test_result_cards_with_only_spam_prices_are_hidden():
     kept, hidden = hide_implausible_results(results)
     assert hidden == 2
     assert {r.lowest_price for r in kept} == {212923, 199900, 68999}
+
+
+def test_quantities_with_units_are_never_model_codes():
+    a = extract_attributes(
+        "Sony WH-1000XM5 Best Active Noise Cancelling Wireless Bluetooth Over Ear "
+        "Headphones with Mic, 30Hrs Battery Life, 40mm driver, Black"
+    )
+    assert a.model_tokens == ["wh-1000xm5"], a.model_tokens
+    b = extract_attributes(
+        "Apple iPhone 17 (256 GB) - Black, 6.3-inch display, A19 chip, 48MP camera"
+    )
+    assert "3-inch" not in b.model_tokens and "48mp" not in b.model_tokens
+
+
+def test_stale_spare_part_offer_is_retired_on_product_page(client, db, monkeypatch):
+    import asyncio
+
+    from app.services import catalog
+    from app.services.price_engine import true_price_from_listing
+    from app.services.product_matcher import MatchResult
+
+    async def run():
+        monkeypatch.setattr(registry, "retailer_search_providers", lambda: [FakeRetailerSearch()])
+        items = [
+            _listing("Apple iPhone 17 Pro 256GB Black", "Amazon.in", 134900),
+            _listing("Apple iPhone 17 Pro 256GB Black", "Croma", 129900),
+        ]
+        monkeypatch.setattr(registry, "product_search_providers", lambda: [FakeSearch(items)])
+        r = await client.post("/api/v1/search", json={"query": "iphone 17 pro 256gb"})
+        product_id = next(x["id"] for x in r.json()["results"] if "Pro 256GB" in x["name"])
+
+        # A spare-part offer recorded before "housing" was an accessory word.
+        import uuid as _uuid
+
+        product = await catalog.load_product(db, _uuid.UUID(product_id))
+        stale = _listing("Full Body Housing for Apple iPhone 17 Pro - Blue", "Cellspare", 26799)
+        await catalog.record_offer(
+            db,
+            product,
+            stale,
+            true_price_from_listing(stale),
+            MatchResult(MatchType.EXACT, 0.9, ["stale"]),
+        )
+        await db.commit()
+
+        offers = await client.get(f"/api/v1/products/{product_id}/offers")
+        titles = [o["title"] for o in offers.json()["offers"]]
+        assert not any("Housing" in t for t in titles), titles
+        assert any(
+            "priced far below" in w or "Hid 1 offer" in w for w in offers.json()["meta"]["warnings"]
+        )
+
+    asyncio.get_event_loop().run_until_complete(run())
+
+
+def test_stale_accessory_product_cards_are_hidden():
+    import uuid
+
+    from app.schemas.product import ProductSearchResult
+    from app.services.search_service import hide_non_product_cards
+
+    def card(name, price):
+        return ProductSearchResult(
+            id=uuid.uuid4(),
+            name=name,
+            brand="Apple",
+            category=None,
+            image=None,
+            lowest_price=price,
+            highest_price=price,
+            offer_count=1,
+            retailers=["x"],
+            average_rating=None,
+            match=None,
+            is_demo=False,
+        )
+
+    results = [
+        card("Apple iPhone 17 Pro 256GB", 129900),
+        card("Full Body Housing for Apple iPhone 17 Pro - Blue", 26799),
+        card("Apple iPhone 17 Pro Max on Rent", 573),
+    ]
+    kept, hidden = hide_non_product_cards(results, "iphone 17 pro")
+    assert hidden == 2 and [r.name for r in kept] == ["Apple iPhone 17 Pro 256GB"]
+    kept, hidden = hide_non_product_cards(results, "iphone 17 pro housing")
+    assert hidden == 1  # the shopper asked for the part; only the rental is hidden

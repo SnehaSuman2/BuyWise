@@ -167,6 +167,26 @@ def filter_implausible_price_outliers(listings: list) -> tuple[list, int]:
     return kept, dropped
 
 
+def hide_non_product_cards(
+    results: list[ProductSearchResult], query_text: str | None
+) -> tuple[list[ProductSearchResult], int]:
+    """Hide product rows whose own name is a spare part or a rental.
+
+    Fresh listings with such titles never reach the results any more, but rows
+    created by earlier searches keep their original names. Unless the shopper asked
+    for an accessory or a rental, those rows are not products either.
+    """
+    q = extract_attributes(query_text or "")
+    kept, hidden = [], 0
+    for r in results:
+        a = extract_attributes(r.name, None, r.brand)
+        if (a.is_accessory and not q.is_accessory) or (a.is_rental and not q.is_rental):
+            hidden += 1
+        else:
+            kept.append(r)
+    return kept, hidden
+
+
 def hide_implausible_results(
     results: list[ProductSearchResult],
 ) -> tuple[list[ProductSearchResult], int]:
@@ -340,6 +360,11 @@ class SearchService:
             if ref:
                 results.insert(0, await self._result_for_product(ref, None))
 
+        results, hidden_non_products = hide_non_product_cards(results, accessory_query)
+        if hidden_non_products:
+            warnings.append(
+                f"Hid {hidden_non_products} accessory or rental product(s) recorded earlier."
+            )
         results, hidden_cards = hide_implausible_results(results)
         if hidden_cards:
             warnings.append(
@@ -521,14 +546,25 @@ class SearchService:
         what identify the product; the rest is dropped.
         """
         attrs = reference.attrs
-        head = re.split(r"\s[-|,(]\s*|\(", attrs.clean_title, maxsplit=1)[0].strip()
-        words = head.split()[:8]
-        query = " ".join(words)
-        if attrs.brand and attrs.brand not in query:
-            query = f"{attrs.brand} {query}"
+        # A literal model code in the title ("wh-1000xm5") is the best possible
+        # query on its own: "sony wh-1000xm5" found eight stores where the first
+        # eight words of Amazon's title ("... best active noise cancelling wireless
+        # bluetooth") found one. Line tokens like "iphone17" are squashed forms
+        # that never appear literally, so they fall through to the title head.
+        codes = sorted(
+            (t for t in attrs.model_tokens if t in attrs.clean_title),
+            key=lambda t: ("-" not in t, -len(t)),  # hyphenated, then longest, first
+        )
+        if codes:
+            query = f"{attrs.brand} {codes[0]}" if attrs.brand else codes[0]
+        else:
+            head = re.split(r"\s[-|,(]\s*|\(", attrs.clean_title, maxsplit=1)[0].strip()
+            query = " ".join(head.split()[:8])
+            if attrs.brand and attrs.brand not in query:
+                query = f"{attrs.brand} {query}"
         if attrs.storage and attrs.storage.lower() not in query.replace(" ", "").lower():
-            query = f"{query} {attrs.storage}"
-        return query.strip() or reference.title
+            query = f"{query} {attrs.storage.lower()}"
+        return query.strip().lower() or reference.title
 
     @staticmethod
     def _filter_to_named_model(groups: list[ListingGroup], query_text: str):
@@ -638,6 +674,7 @@ class SearchService:
     ) -> list[ProductSearchResult]:
         results: list[ProductSearchResult] = []
         seen: dict[uuid.UUID, ListingGroup] = {}
+        cache = catalog.PersistCache()
         for group in groups[:24]:
             ref_listing = group.listings[0][0]
             identifiers = dict(group.reference.identifiers)
@@ -671,7 +708,7 @@ class SearchService:
                     is_demo=all(l.is_demo for l, _ in group.listings),
                 )
             group.product = product
-            variant = await catalog.primary_variant(self.db, product)
+            variant = await catalog.primary_variant(self.db, product, cache=cache)
             for listing, match in group.listings:
                 tp = true_price_from_listing(listing)
                 if tp:
@@ -682,6 +719,7 @@ class SearchService:
                         tp,
                         group.reference_match if attached else match,
                         variant=variant,
+                        cache=cache,
                     )
             # Several listing groups can resolve to the same stored product (a group
             # whose title differs but whose identifiers/canonical key match an existing
@@ -693,7 +731,7 @@ class SearchService:
         # ranges reflect all offers rather than however many existed mid-loop. Offers
         # recorded before today's filters existed are retired here if implausible.
         for product_id, group in seen.items():
-            product = await catalog.load_product(self.db, product_id)
+            product = group.product  # created or loaded above in this same session
             if product is not None:
                 await catalog.deactivate_implausible_offers(self.db, product)
                 results.append(await self._result_for_product(product, group))

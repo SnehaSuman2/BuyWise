@@ -76,7 +76,8 @@ class OfferService:
                 f"Excluded {excluded_count} offer(s) from outside India "
                 f"({', '.join(excluded_names[:4])})."
             )
-        variant = await catalog.primary_variant(self.db, product)
+        cache = catalog.PersistCache()
+        variant = await catalog.primary_variant(self.db, product, cache=cache)
         stored = 0
         for listing in listings:
             if not listing.price:
@@ -91,7 +92,9 @@ class OfferService:
                 continue
             tp = true_price_from_listing(listing)
             if tp:
-                await catalog.record_offer(self.db, product, listing, tp, match, variant=variant)
+                await catalog.record_offer(
+                    self.db, product, listing, tp, match, variant=variant, cache=cache
+                )
                 stored += 1
         return {"providers": providers_used, "warnings": warnings, "stored": stored}
 

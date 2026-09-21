@@ -52,6 +52,7 @@ function SearchContent() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [input, setInput] = useState(q);
+  const [showAllWarnings, setShowAllWarnings] = useState(false);
   const [prevQ, setPrevQ] = useState(q);
   const fileRef = useRef<HTMLInputElement>(null);
   if (prevQ !== q) { setPrevQ(q); setInput(q); }
@@ -165,7 +166,18 @@ function SearchContent() {
       {shown?.query_type === "url" && (
         <p className="text-sm text-muted-foreground mb-4">Detected retailer: <strong>{shown.detected_retailer || "unknown"}</strong> · identified as &quot;{shown.query}&quot;. Each result shows how confidently it matches the product in your link.</p>
       )}
-      {shown?.meta.warnings.map((w) => <p key={w} className="text-sm text-amber-600 flex items-center gap-2 mb-2"><AlertTriangle className="w-4 h-4" />{w}</p>)}
+      {shown && shown.meta.warnings.length > 0 && (
+        <div className="mb-4">
+          {(showAllWarnings ? shown.meta.warnings : shown.meta.warnings.slice(0, 1)).map((w) => (
+            <p key={w} className="text-sm text-amber-600 flex items-start gap-2 mb-1"><AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />{w}</p>
+          ))}
+          {shown.meta.warnings.length > 1 && (
+            <button type="button" onClick={() => setShowAllWarnings((v) => !v)} className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2">
+              {showAllWarnings ? "Show less" : `${shown.meta.warnings.length - 1} more note${shown.meta.warnings.length - 1 === 1 ? "" : "s"} about what was filtered`}
+            </button>
+          )}
+        </div>
+      )}
 
       {q && (
         <div className="flex items-center gap-2 mb-6 flex-wrap">

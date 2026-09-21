@@ -237,6 +237,12 @@ _LINE_RE = re.compile(
     r"prime|power|turbo|classic|fold|flip))?\b",
     re.I,
 )
+# A quantity with a unit ("30hrs", "48mp", "6.3-inch", "256gb") is a specification,
+# never a model code, however code-like it looks to the token pattern below.
+_UNIT_TOKEN_RE = re.compile(
+    r"\d+(?:\.\d+)?-?(?:gb|tb|mb|mm|cm|m|hz|khz|ghz|w|kw|mah|mp|hrs?|h|ms|db|kg|g|ml|l|"
+    r"fps|nits|ppi|x|k|p|in|inch|inches|hr)s?"
+)
 _MODEL_TOKEN_RE = re.compile(
     r"\b(?=[A-Za-z0-9-]{4,}\b)(?=[A-Za-z0-9-]*\d)(?=[A-Za-z0-9-]*[A-Za-z])[A-Za-z0-9-]+\b"
 )
@@ -403,7 +409,7 @@ def extract_attributes(
         {
             m.lower()
             for m in _MODEL_TOKEN_RE.findall(title)
-            if not re.fullmatch(r"\d+(gb|tb|mm|hz|w|mah|mp)", m.lower())
+            if not _UNIT_TOKEN_RE.fullmatch(m.lower())
             and m.lower() not in {"5g", "4g", "usb-c", "wi-fi"}
         }
     )
@@ -418,7 +424,7 @@ def extract_attributes(
             and re.search(r"\d", b)
             and re.search(r"[a-z]", b)
             and len(b) >= 4
-            and not re.fullmatch(r"\d+(?:\.\d+)?(gb|tb|mm|hz|w|mah|mp|inch|in|g)", b)
+            and not _UNIT_TOKEN_RE.fullmatch(b)
             and (a + b) not in attrs.model_tokens
         ):
             attrs.model_tokens.append(a + b)

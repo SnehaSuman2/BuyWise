@@ -6,6 +6,7 @@ All writes go through here so provenance and demo labelling are consistent.
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -40,10 +41,46 @@ def clean_identifiers(identifiers: dict | None) -> dict[str, str]:
     return out
 
 
+@dataclass
+class PersistCache:
+    """Per-request memo for the lookups that persisting a search repeats.
+
+    A search persists around sixty listings across two dozen products, and each
+    listing used to cost its own retailer lookup, seller lookup, variant lookup and
+    existing-offer lookup: several hundred round trips to the database, which from
+    the API host is the bulk of a thirty-second search. Retailers, sellers and
+    variants repeat constantly within one search, and a product's existing offers
+    can be read once. Nothing here outlives the request.
+    """
+
+    retailers: dict[str, Retailer] = field(default_factory=dict)
+    sellers: dict[tuple[uuid.UUID, str], Seller] = field(default_factory=dict)
+    variants: dict[uuid.UUID, ProductVariant | None] = field(default_factory=dict)
+    offers: dict[uuid.UUID, dict[tuple, Offer]] = field(default_factory=dict)
+
+
 async def get_or_create_retailer(
-    db: AsyncSession, name: str | None, domain: str | None, is_demo: bool = False
+    db: AsyncSession,
+    name: str | None,
+    domain: str | None,
+    is_demo: bool = False,
+    cache: PersistCache | None = None,
 ) -> Retailer:
     curated = resolve_retailer(name, domain)
+    cache_key = (
+        curated["slug"] if curated else slugify(domain or (name or "Unknown retailer").strip())
+    )
+    if cache is not None and cache_key in cache.retailers:
+        return cache.retailers[cache_key]
+    retailer = await _get_or_create_retailer(db, name, domain, is_demo, curated)
+    if cache is not None:
+        cache.retailers[cache_key] = retailer
+    return retailer
+
+
+async def _get_or_create_retailer(
+    db: AsyncSession, name: str | None, domain: str | None, is_demo: bool, curated
+) -> Retailer:
     if curated:
         result = await db.execute(select(Retailer).where(Retailer.slug == curated["slug"]))
         retailer = result.scalar_one_or_none()
@@ -89,11 +126,17 @@ async def get_or_create_retailer(
 
 
 async def get_or_create_seller(
-    db: AsyncSession, retailer: Retailer, name: str | None, listing: NormalizedListing | None = None
+    db: AsyncSession,
+    retailer: Retailer,
+    name: str | None,
+    listing: NormalizedListing | None = None,
+    cache: PersistCache | None = None,
 ) -> Seller | None:
     if not name:
         return None
     name = name.strip()[:300]
+    if cache is not None and (retailer.id, name) in cache.sellers:
+        return cache.sellers[(retailer.id, name)]
     result = await db.execute(
         select(Seller).where(Seller.retailer_id == retailer.id, Seller.name == name)
     )
@@ -107,6 +150,8 @@ async def get_or_create_seller(
         )
         db.add(seller)
         await db.flush()
+    if cache is not None:
+        cache.sellers[(retailer.id, name)] = seller
     return seller
 
 
@@ -222,14 +267,21 @@ async def upsert_product(
     return product
 
 
-async def primary_variant(db: AsyncSession, product: Product) -> ProductVariant | None:
+async def primary_variant(
+    db: AsyncSession, product: Product, cache: PersistCache | None = None
+) -> ProductVariant | None:
+    if cache is not None and product.id in cache.variants:
+        return cache.variants[product.id]
     result = await db.execute(
         select(ProductVariant)
         .where(ProductVariant.product_id == product.id)
         .order_by(ProductVariant.created_at)
         .limit(1)
     )
-    return result.scalar_one_or_none()
+    variant = result.scalar_one_or_none()
+    if cache is not None:
+        cache.variants[product.id] = variant
+    return variant
 
 
 async def record_offer(
@@ -240,22 +292,37 @@ async def record_offer(
     match: MatchResult,
     *,
     variant: ProductVariant | None = None,
+    cache: PersistCache | None = None,
 ) -> Offer:
     retailer = await get_or_create_retailer(
-        db, listing.retailer_name, listing.retailer_domain, is_demo=listing.is_demo
+        db, listing.retailer_name, listing.retailer_domain, is_demo=listing.is_demo, cache=cache
     )
-    seller = await get_or_create_seller(db, retailer, listing.seller_name, listing)
+    seller = await get_or_create_seller(db, retailer, listing.seller_name, listing, cache=cache)
     observed = listing.observed_at or utcnow()
-    stmt = select(Offer).where(Offer.product_id == product.id, Offer.retailer_id == retailer.id)
-    stmt = (
-        stmt.where(Offer.seller_id == seller.id)
-        if seller
-        else stmt.where(Offer.seller_id.is_(None))
-    )
-    if listing.condition:
-        stmt = stmt.where(Offer.condition == listing.condition)
-    result = await db.execute(stmt.limit(1))
-    offer = result.scalar_one_or_none()
+    condition = listing.condition or "new"
+    offer_key = (retailer.id, seller.id if seller else None, condition)
+    if cache is not None:
+        # One read of the product's offers serves every listing for it in this request.
+        if product.id not in cache.offers:
+            rows = (
+                (await db.execute(select(Offer).where(Offer.product_id == product.id)))
+                .scalars()
+                .all()
+            )
+            cache.offers[product.id] = {
+                (o.retailer_id, o.seller_id, o.condition or "new"): o for o in rows
+            }
+        offer = cache.offers[product.id].get(offer_key)
+    else:
+        stmt = select(Offer).where(Offer.product_id == product.id, Offer.retailer_id == retailer.id)
+        stmt = (
+            stmt.where(Offer.seller_id == seller.id)
+            if seller
+            else stmt.where(Offer.seller_id.is_(None))
+        )
+        stmt = stmt.where(Offer.condition == condition)
+        result = await db.execute(stmt.limit(1))
+        offer = result.scalar_one_or_none()
     values = dict(
         variant_id=variant.id if variant else None,
         seller_id=seller.id if seller else None,
@@ -293,6 +360,8 @@ async def record_offer(
         offer.seller = seller
         db.add(offer)
         await db.flush()
+        if cache is not None:
+            cache.offers.setdefault(product.id, {})[offer_key] = offer
     else:
         for k, v in values.items():
             setattr(offer, k, v)
@@ -349,16 +418,26 @@ async def deactivate_implausible_offers(db: AsyncSession, product: Product) -> i
     deleted, only marked inactive. Returns the number retired.
     """
     offers = await load_offers(db, product.id)
-    exact = [o for o in offers if o.match_type == MatchType.EXACT.value]
-    basis = exact if len(exact) >= 3 else offers
-    floor = implausible_price_floor([float(o.estimated_final_price) for o in basis])
-    if floor is None:
-        return 0
     retired = 0
+    # An offer whose own listing title is a spare part or a rental was recorded
+    # before those words were recognised. It is not an offer for this product.
+    product_attrs = extract_attributes(product.name)
+    remaining = []
     for offer in offers:
-        if float(offer.estimated_final_price) < floor:
+        title_attrs = extract_attributes(offer.title or "")
+        if (title_attrs.is_accessory and not product_attrs.is_accessory) or title_attrs.is_rental:
             offer.is_active = False
             retired += 1
+        else:
+            remaining.append(offer)
+    exact = [o for o in remaining if o.match_type == MatchType.EXACT.value]
+    basis = exact if len(exact) >= 3 else remaining
+    floor = implausible_price_floor([float(o.estimated_final_price) for o in basis])
+    if floor is not None:
+        for offer in remaining:
+            if float(offer.estimated_final_price) < floor:
+                offer.is_active = False
+                retired += 1
     if retired:
         await db.flush()
     return retired
