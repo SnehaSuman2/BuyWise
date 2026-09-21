@@ -135,7 +135,29 @@ ACCESSORY_WORDS = {
     "ear cushion",
     "earcup",
     "cushion",
+    # Spare/replacement parts. A listing titled exactly "Apple iPhone 17 Pro" that is
+    # actually a spare back panel is worse than a mislabelled case: nothing in the
+    # ordinary product title marks it, only this vocabulary does.
+    "full housing",
+    "housing panel",
+    "body panel",
+    "back panel",
+    "back glass",
+    "back cover panel",
+    "flex cable",
+    "digitizer",
+    "logic board",
+    "motherboard",
+    "charging port",
+    "spare part",
+    "display panel",
+    "lcd panel",
+    "camera lens protector",
 }
+
+# A rental listing ("on rent", "monthly rental") is not a price for owning the
+# product and is not comparable to a purchase price.
+RENTAL_WORDS = {"on rent", "for rent", "rental", "rent to own"}
 PRODUCT_LINE_BRANDS = {
     "iphone": "apple",
     "ipad": "apple",
@@ -314,6 +336,7 @@ def extract_attributes(
     # If the shopper is genuinely searching for an accessory, the reference listing is
     # flagged the same way, so like still matches like.
     attrs.is_accessory = any(re.search(rf"\b{re.escape(w)}s?\b", text) for w in ACCESSORY_WORDS)
+    attrs.is_rental = any(re.search(rf"\b{re.escape(w)}\b", text) for w in RENTAL_WORDS)
 
     # RAM / storage
     pair = _PAIR_RE.search(text)

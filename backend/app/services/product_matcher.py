@@ -173,9 +173,28 @@ def match_products(reference: Candidate, candidate: Candidate) -> MatchResult:
     mods_r = ra.tokens & LINEUP_MODIFIERS
     mods_c = ca.tokens & LINEUP_MODIFIERS
     if mods_r != mods_c and (ra.tokens & ca.tokens):
-        reasons.append(
-            f"Model line differs ({' '.join(sorted(mods_r)) or 'base'} vs {' '.join(sorted(mods_c)) or 'base'})"
+        line = (
+            f"Model line differs ({' '.join(sorted(mods_r)) or 'base'} vs "
+            f"{' '.join(sorted(mods_c)) or 'base'})"
         )
+        # A tier difference alone (base vs Pro Max of the SAME generation) is a
+        # legitimate sibling in the line-up. This branch used to return before the
+        # generation was ever compared, so "iPhone 17" vs "iPhone 15 Pro Max" — a
+        # different generation that also differs in tier — was judged solely on
+        # tier and came back as a 0.7-confidence sibling match. Checking generation
+        # here, not just in step 5, catches that: two products that differ in BOTH
+        # generation and tier are not siblings, they are simply a different phone
+        # that happens to share brand and line-up words.
+        if ra.generation and ca.generation and ra.generation != ca.generation:
+            reasons.append(f"Generation differs ({ra.generation} vs {ca.generation})")
+            reasons.append(line)
+            token_sim = _jaccard(ra.tokens, ca.tokens)
+            return MatchResult(
+                MatchType.SIMILAR if token_sim >= 0.3 else MatchType.UNKNOWN,
+                0.35 if token_sim >= 0.3 else 0.2,
+                reasons,
+            )
+        reasons.append(line)
         return MatchResult(MatchType.SIMILAR, 0.7, reasons)
 
     # 4. Model tokens (hyphen-insensitive: "wh-1000xm5" == "wh1000xm5")

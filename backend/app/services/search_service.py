@@ -102,6 +102,58 @@ def filter_accessories(listings: list, query_text: str | None) -> tuple[list, in
     return kept, dropped
 
 
+def filter_rentals(listings: list, query_text: str | None) -> tuple[list, int]:
+    """Drop rental listings unless the shopper is looking to rent.
+
+    A rental price ("₹573 on rent") is not a price for owning the product. Left in,
+    it can become the cheapest figure shown for something nobody can actually buy
+    at that price. Returns (kept, dropped_count).
+    """
+    query_attrs = extract_attributes(query_text or "")
+    if query_attrs.is_rental:
+        return listings, 0
+
+    kept, dropped = [], 0
+    for listing in listings:
+        if extract_attributes(listing.title, None, listing.brand).is_rental:
+            dropped += 1
+        else:
+            kept.append(listing)
+    return kept, dropped
+
+
+def drop_implausible_prices(groups: list["ListingGroup"]) -> int:
+    """Remove a listing priced far below the rest of its own group.
+
+    Grouping matches on title and identifiers, which is correct — price must never
+    decide whether two listings are the same product. But a spam or mismatched
+    listing sometimes carries the exact right title at a small fraction of every
+    other listing's price (a real case: a ₹148 "iPhone 17 Pro" sitting beside nine
+    listings above ₹1,00,000). That is not a real price for the item; it is
+    evidence the listing is not actually selling one.
+
+    The comparison is entirely self-referential, against this group's own other
+    listings, so no external price data is assumed. Only groups with at least 3
+    priced listings are checked, so one early or unusual listing cannot become
+    "the group" on its own, and the bar (a fifth of the median) sits far below any
+    ordinary retailer discount.
+    """
+    dropped = 0
+    for group in groups:
+        priced = [pair for pair in group.listings if pair[0].price]
+        if len(priced) < 3:
+            continue
+        prices = sorted(listing.price for listing, _ in priced)
+        median = prices[len(prices) // 2]
+        if not median or median <= 0:
+            continue
+        floor = median * 0.2
+        kept = [pair for pair in group.listings if not (pair[0].price and pair[0].price < floor)]
+        dropped += len(group.listings) - len(kept)
+        group.listings = kept
+    return dropped
+
+
 def query_from_url(url: str) -> str:
     """Derive a search query from a retailer product URL slug."""
     parsed = urlparse(url)
@@ -205,8 +257,18 @@ class SearchService:
                 f"Hid {dropped_accessories} accessory listing(s) (cases, skins, straps). "
                 f"Add the accessory name to your search to see them."
             )
+        listings, dropped_rentals = filter_rentals(listings, accessory_query)
+        if dropped_rentals:
+            warnings.append(f"Hid {dropped_rentals} rental listing(s) — not a purchase price.")
 
         groups = group_listings(listings)
+        dropped_implausible = drop_implausible_prices(groups)
+        groups = [g for g in groups if g.listings]
+        if dropped_implausible:
+            warnings.append(
+                f"Hid {dropped_implausible} listing(s) priced far below the rest for the "
+                f"same product (likely spam or a mismatched listing)."
+            )
         if reference is not None:
             for g in groups:
                 g.reference_match = match_products(reference, g.reference)
@@ -442,7 +504,7 @@ class SearchService:
         for g in groups:
             m = match_products(query_ref, g.reference)
             conflicting = m.match_type == MatchType.UNKNOWN or any(
-                r.startswith("Model code differs") for r in m.reasons
+                r.startswith(("Model code differs", "Generation differs")) for r in m.reasons
             )
             if conflicting:
                 hidden += 1
