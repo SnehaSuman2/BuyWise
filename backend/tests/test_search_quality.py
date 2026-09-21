@@ -227,19 +227,3 @@ async def test_outage_shows_one_clear_warning(client, monkeypatch):
     body = (await client.post("/api/v1/search", json={"query": "sony wh-1000xm5"})).json()
     outage = [w for w in body["meta"]["warnings"] if "temporarily unavailable" in w]
     assert len(outage) == 1 and "seen before" in outage[0]
-
-
-def test_fanout_query_prefers_a_literal_model_code():
-    from app.services.product_matcher import Candidate
-    from app.services.search_service import SearchService
-
-    amazon_title = (
-        "Sony WH-1000XM5 Best Active Noise Cancelling Wireless Bluetooth Over Ear "
-        "Headphones with Mic for Clear Calling, 30Hrs Battery Life, Black"
-    )
-    assert SearchService._fanout_query(Candidate(amazon_title, brand="Sony")) == "sony wh-1000xm5"
-    iphone = Candidate(
-        "Apple iPhone 17 (256 GB) - Black, 6.3-inch display, A19 chip", brand="Apple"
-    )
-    q = SearchService._fanout_query(iphone)
-    assert q.startswith("apple iphone 17") and "256gb" in q.replace(" ", "")

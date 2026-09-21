@@ -32,7 +32,7 @@ from app.services import catalog
 from app.services.market_filter import filter_to_market
 from app.services.price_engine import true_price_from_listing
 from app.services.product_matcher import Candidate, MatchResult, MatchType, match_products
-from app.services.product_normalizer import extract_attributes
+from app.services.product_normalizer import extract_attributes, search_query_for
 
 logger = logging.getLogger(__name__)
 
@@ -271,11 +271,16 @@ class SearchService:
                     warnings.append(
                         "Image uploads need a publicly reachable API_PUBLIC_URL for Google Lens; using demo results."
                     )
-            listings, meta = await self._search_by_image(image_url or "")
+            listings, reference, meta = await self._search_by_image(image_url or "")
             providers_used += meta["providers"]
             warnings += meta["warnings"]
             cached = meta["cached"]
-            query_text = "image search"
+            query_text = reference.title if reference else "image search"
+            warnings.append(
+                "Photo results are visual look-alikes found by image search, not confirmed "
+                "matches. If your photo is a screenshot of a product page, paste that "
+                "page's link instead to get the exact product."
+            )
         else:
             query_type = "text"
             query_text = (request.query or "").strip()
@@ -288,6 +293,8 @@ class SearchService:
             warnings += meta["warnings"]
             cached = meta["cached"]
             unavailable_reason = meta.get("unavailable")
+
+        providers_ms = int((time.perf_counter() - started) * 1000)
 
         # Keep only merchants that actually sell into India before anything is grouped,
         # matched or persisted — a foreign listing's converted price is not a price the
@@ -329,6 +336,18 @@ class SearchService:
         if reference is not None:
             for g in groups:
                 g.reference_match = match_products(reference, g.reference)
+            if query_type == "image":
+                # The anchor is a visual look-alike, not a product the shopper named.
+                # Nothing matched against it can honestly be called exact.
+                for g in groups:
+                    m = g.reference_match
+                    if m.match_type == MatchType.EXACT:
+                        g.reference_match = MatchResult(
+                            MatchType.SIMILAR,
+                            min(m.confidence, 0.7),
+                            ["Looks like your photo; verify the product before buying"]
+                            + [r for r in m.reasons if r != "Reference listing"],
+                        )
             groups.sort(
                 key=lambda g: (
                     -(g.reference_match.match_type == MatchType.EXACT),
@@ -343,7 +362,9 @@ class SearchService:
                     f"one you searched for."
                 )
 
+        persist_started = time.perf_counter()
         results = await self._persist_groups(groups, query_type, reference_product=ref_product)
+        persist_ms = int((time.perf_counter() - persist_started) * 1000)
         if not results and unavailable_reason and query_type == "text":
             # The vendor is down or out of quota. Answer from what the catalogue
             # already knows rather than showing nothing, and say so plainly.
@@ -411,6 +432,11 @@ class SearchService:
                 providers=sorted(set(providers_used)),
                 cached=cached,
                 warnings=warnings,
+                timings={
+                    "providers_ms": providers_ms,
+                    "persist_ms": persist_ms,
+                    "total_ms": int((time.perf_counter() - started) * 1000),
+                },
             ),
         )
 
@@ -538,33 +564,7 @@ class SearchService:
 
     @staticmethod
     def _fanout_query(reference: Candidate) -> str:
-        """A short query for finding the referenced product at other retailers.
-
-        A retailer's own title ("Apple iPhone 16 (128 GB) - Black, 6.1-inch Super
-        Retina XDR, A18 chip...") is far too specific for a marketplace search and
-        returns little or nothing from other stores. Brand, model and storage are
-        what identify the product; the rest is dropped.
-        """
-        attrs = reference.attrs
-        # A literal model code in the title ("wh-1000xm5") is the best possible
-        # query on its own: "sony wh-1000xm5" found eight stores where the first
-        # eight words of Amazon's title ("... best active noise cancelling wireless
-        # bluetooth") found one. Line tokens like "iphone17" are squashed forms
-        # that never appear literally, so they fall through to the title head.
-        codes = sorted(
-            (t for t in attrs.model_tokens if t in attrs.clean_title),
-            key=lambda t: ("-" not in t, -len(t)),  # hyphenated, then longest, first
-        )
-        if codes:
-            query = f"{attrs.brand} {codes[0]}" if attrs.brand else codes[0]
-        else:
-            head = re.split(r"\s[-|,(]\s*|\(", attrs.clean_title, maxsplit=1)[0].strip()
-            query = " ".join(head.split()[:8])
-            if attrs.brand and attrs.brand not in query:
-                query = f"{attrs.brand} {query}"
-        if attrs.storage and attrs.storage.lower() not in query.replace(" ", "").lower():
-            query = f"{query} {attrs.storage.lower()}"
-        return query.strip().lower() or reference.title
+        return search_query_for(reference.title, reference.brand, reference.specs)
 
     @staticmethod
     def _filter_to_named_model(groups: list[ListingGroup], query_text: str):
@@ -615,7 +615,9 @@ class SearchService:
         products = (await self.db.execute(stmt)).scalars().all()
         return [await self._result_for_product(p, None) for p in products]
 
-    async def _search_by_image(self, image_url: str) -> tuple[list[NormalizedListing], dict]:
+    async def _search_by_image(
+        self, image_url: str
+    ) -> tuple[list[NormalizedListing], Candidate | None, dict]:
         providers_used, warnings, listings, cached = [], [], [], False
         for provider in registry.image_search_providers():
             res: ProviderResult = await provider.search_by_image(image_url)
@@ -628,13 +630,27 @@ class SearchService:
             if listings:
                 break
         priced = [l for l in listings if l.price]
-        if listings and not priced:
-            # Lens matches often lack prices: run a text search using the best-matching title.
-            text_listings, meta = await self._search_text(listings[0].title, None, None)
+        best = (priced or listings)[0] if listings else None
+        reference = None
+        if best is not None:
+            reference = Candidate(
+                best.title, catalog.clean_identifiers(best.identifiers), best.brand
+            )
+            # Lens returns look-alikes at whichever store it saw them, usually one.
+            # The same item at other stores comes from a text search on the best
+            # match's title, so a photo gives a comparison and not a single price.
+            text_listings, meta = await self._search_text(
+                search_query_for(best.title, best.brand), None, None
+            )
             providers_used += meta["providers"]
             warnings += meta["warnings"]
-            priced = text_listings
-        return priced, {"providers": providers_used, "warnings": warnings, "cached": cached}
+            cached = cached or meta["cached"]
+            priced = priced + text_listings
+        return (
+            priced,
+            reference,
+            {"providers": providers_used, "warnings": warnings, "cached": cached},
+        )
 
     async def _store_uploaded_image(self, image_base64: str) -> str | None:
         """Persist an uploaded image so Google Lens can fetch it. Requires a public API_PUBLIC_URL."""

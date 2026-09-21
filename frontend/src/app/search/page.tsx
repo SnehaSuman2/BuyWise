@@ -13,7 +13,7 @@ import type { ProductSearchResult, SearchResponse } from "@/lib/types";
 import { downscaleImage, PENDING_PHOTO_KEY } from "@/lib/photo";
 import { track } from "@/lib/analytics";
 
-function ProductCard({ product }: { product: ProductSearchResult }) {
+function ProductCard({ product, visual = false }: { product: ProductSearchResult; visual?: boolean }) {
   return (
     <Link href={`/product/${product.id}`} className="glass rounded-2xl overflow-hidden hover:shadow-xl hover:-translate-y-1 transition-all duration-300 group flex flex-col">
       <div className="aspect-square bg-muted/30 relative overflow-hidden">
@@ -24,7 +24,7 @@ function ProductCard({ product }: { product: ProductSearchResult }) {
       <div className="p-4 flex flex-col flex-1">
         <div className="text-xs text-indigo-500 font-medium mb-1">{[product.brand, product.category].filter(Boolean).join(" · ")}</div>
         <h3 className="font-semibold text-sm leading-snug mb-2 line-clamp-2 group-hover:text-indigo-500 transition-colors">{product.name}</h3>
-        {product.match && <span className={`self-start mb-2 px-2 py-0.5 rounded-md border text-[11px] font-medium ${matchBadgeClass(product.match.match_type)}`}>{product.match.label} · {Math.round(product.match.confidence * 100)}%</span>}
+        {product.match && <span className={`self-start mb-2 px-2 py-0.5 rounded-md border text-[11px] font-medium ${matchBadgeClass(product.match.match_type)}`}>{visual ? "Visual match" : product.match.label} · {Math.round(product.match.confidence * 100)}%</span>}
         <div className="flex items-end justify-between mt-auto">
           <div>
             <div className="text-lg font-bold">{product.lowest_price ? formatPrice(product.lowest_price) : "No price"}</div>
@@ -159,7 +159,7 @@ function SearchContent() {
       {photoMode && photoPreview && (
         <div className="flex items-center gap-3 mb-4">
           <img src={photoPreview} alt="Your photo" className="w-16 h-16 rounded-xl object-cover border border-border/40" />
-          <p className="text-sm text-muted-foreground flex-1">Results are visual matches. Check the match label on each card before comparing prices.</p>
+          <p className="text-sm text-muted-foreground flex-1">Visual look-alikes{shown?.query && shown.query !== "image search" ? <>, identified as &ldquo;{shown.query}&rdquo;</> : null}. Check the product name and seller on each card before comparing prices.</p>
           <button type="button" onClick={clearPhoto} className="p-2 rounded-lg hover:bg-muted" aria-label="Clear photo"><X className="w-4 h-4" /></button>
         </div>
       )}
@@ -194,7 +194,7 @@ function SearchContent() {
       {!loading && shown && shown.results.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
           {shown.results.map((product, i) => (
-            <div key={product.id} className="animate-slide-up" style={{ animationDelay: `${Math.min(i, 12) * 0.04}s`, opacity: 0, animationFillMode: "forwards" }}><ProductCard product={product} /></div>
+            <div key={product.id} className="animate-slide-up" style={{ animationDelay: `${Math.min(i, 12) * 0.04}s`, opacity: 0, animationFillMode: "forwards" }}><ProductCard product={product} visual={shown.query_type === "image"} /></div>
           ))}
         </div>
       )}

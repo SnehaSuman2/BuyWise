@@ -77,6 +77,8 @@ class Settings(BaseSettings):
     CACHE_TTL_OFFERS_SECONDS: int = 3 * 60 * 60
     CACHE_TTL_TRUST_SECONDS: int = 7 * 24 * 60 * 60
     OFFER_REFRESH_SECONDS: int = 6 * 60 * 60
+    # A product with fewer than two offers is refreshed sooner: one offer is not a comparison.
+    OFFER_THIN_REFRESH_SECONDS: int = 30 * 60
 
     # --- Security ---
     SECRET_KEY: str = ""

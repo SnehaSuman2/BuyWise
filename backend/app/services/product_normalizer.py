@@ -159,6 +159,25 @@ ACCESSORY_WORDS = {
 
 # A rental listing ("on rent", "monthly rental") is not a price for owning the
 # product and is not comparable to a purchase price.
+# Words a listing title starts with that sell rather than describe. Never a brand.
+SALES_WORDS = {
+    "buy",
+    "shop",
+    "new",
+    "genuine",
+    "original",
+    "latest",
+    "best",
+    "cheap",
+    "cheapest",
+    "online",
+    "offer",
+    "sale",
+    "top",
+    "premium",
+    "official",
+}
+
 RENTAL_WORDS = {"on rent", "for rent", "rental", "rent to own"}
 PRODUCT_LINE_BRANDS = {
     "iphone": "apple",
@@ -331,7 +350,12 @@ def extract_attributes(
                 break
     if not brand:
         first = text.split(" ")[0] if text else ""
-        if first.isalpha() and len(first) > 2 and first not in STOPWORDS:
+        if (
+            first.isalpha()
+            and len(first) > 2
+            and first not in STOPWORDS
+            and first not in SALES_WORDS
+        ):
             brand = first
     if brand in PRODUCT_LINE_BRANDS:
         brand = PRODUCT_LINE_BRANDS[brand]
@@ -443,6 +467,34 @@ def extract_attributes(
     raw_tokens = re.findall(r"[a-z0-9]+(?:-[a-z0-9]+)*", core)
     attrs.tokens = {t for t in raw_tokens if t not in STOPWORDS and len(t) > 1}
     return attrs
+
+
+def search_query_for(title: str, brand: str | None = None, specs: dict | None = None) -> str:
+    """A short marketplace query for finding this product at other retailers.
+
+    A retailer's own title ("Nermosa Women's Hand Block Floral Printed Straight Kurta
+    Set with Palazzo Pants & Dupatta Ethnic Kurta Set for Casual Outings ...") is far
+    too specific for a marketplace search. A literal model code with the brand
+    ("sony wh-1000xm5") is the best query there is; otherwise the head of the title,
+    trimmed of sales words, plus the storage size when the product has one.
+    """
+    attrs = extract_attributes(title, specs, brand)
+    codes = sorted(
+        (t for t in attrs.model_tokens if t in attrs.clean_title),
+        key=lambda t: ("-" not in t, -len(t)),  # hyphenated, then longest, first
+    )
+    if codes:
+        query = f"{attrs.brand} {codes[0]}" if attrs.brand else codes[0]
+    else:
+        head = re.split(r"\s[-|,(]\s*|\(", attrs.clean_title, maxsplit=1)[0].strip()
+        while head.split(" ", 1)[0] in SALES_WORDS and " " in head:
+            head = head.split(" ", 1)[1]
+        query = " ".join(head.split()[:8])
+        if attrs.brand and attrs.brand not in query:
+            query = f"{attrs.brand} {query}"
+    if attrs.storage and attrs.storage.lower() not in query.replace(" ", "").lower():
+        query = f"{query} {attrs.storage.lower()}"
+    return query.strip().lower() or title
 
 
 def canonical_key(attrs: NormalizedAttributes, identifiers: dict | None = None) -> str:

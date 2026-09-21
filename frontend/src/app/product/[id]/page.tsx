@@ -90,7 +90,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
               <div>
                 <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-1 flex items-center gap-1"><IndianRupee className="w-3 h-3" /> Price status</div>
                 <div className={`text-xl font-bold ${signal ? getPriceActionColor(signal.action) : ""}`}>{signal ? priceStatusLabel(signal.status) : "—"}</div>
-                <div className="text-xs text-muted-foreground">{history?.stats?.percent_vs_average != null ? `${Math.abs(history.stats.percent_vs_average)}% ${history.stats.percent_vs_average < 0 ? "below" : "above"} 90-day avg` : "Not enough BuyWise history yet"}</div>
+                <div className="text-xs text-muted-foreground">{history?.stats && history.stats.observations >= 2 && history.stats.percent_vs_average != null ? `${Math.abs(history.stats.percent_vs_average)}% ${history.stats.percent_vs_average < 0 ? "below" : "above"} 90-day avg` : history?.history?.[0] ? `Tracking since ${new Date(history.history[0].date).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}` : "Not enough BuyWise history yet"}</div>
               </div>
             </div>
           )}
@@ -134,7 +134,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
 
       <section id="history" className="mb-16">
         <div className="flex flex-wrap items-center gap-3 mb-6"><h2 className="text-2xl font-bold flex items-center gap-2"><TrendingDown className="w-6 h-6 text-purple-500" /> Price history</h2>{history && <DataBadge meta={history.meta} />}</div>
-        {history?.stats ? (
+        {history?.stats && history.stats.observations >= 2 ? (
           <>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
               {[
@@ -147,6 +147,15 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
             <div className="glass rounded-2xl p-4"><PriceHistoryChart data={history} /></div>
             <p className="text-xs text-muted-foreground mt-3">{history.stats.observations} daily observations over {history.stats.span_days} days · trend: {history.stats.trend}. {history.message}</p>
           </>
+        ) : history?.stats ? (
+          <div className="glass rounded-2xl p-6">
+            <div className="flex flex-wrap items-baseline gap-x-6 gap-y-2 mb-3">
+              <div><div className="text-xs text-muted-foreground">Price recorded</div><div className="text-2xl font-bold tabular-nums">{formatPrice(history.stats.current_price)}</div></div>
+              <div><div className="text-xs text-muted-foreground">Tracking started</div><div className="text-lg font-semibold">{history.history[0] ? new Date(history.history[0].date).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" }) : "today"}</div></div>
+            </div>
+            <p className="text-sm text-muted-foreground">{history.message}</p>
+            <p className="text-sm text-muted-foreground mt-2">Save this product or set an alert and BuyWise re-checks its price for you; a buy-or-wait signal appears once there are seven days of observations.</p>
+          </div>
         ) : (
           <div className="glass rounded-2xl p-6 text-sm text-muted-foreground">{history?.message || "Price history unavailable for this product."}</div>
         )}

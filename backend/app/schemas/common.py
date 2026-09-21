@@ -13,3 +13,5 @@ class DataMeta(BaseModel):
     providers: list[str] = []
     cached: bool = False
     warnings: list[str] = []
+    # Where the time went, in milliseconds, for the diagnostics-minded.
+    timings: dict[str, int] | None = None

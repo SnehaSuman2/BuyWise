@@ -26,6 +26,7 @@ from app.services.affiliate_service import go_url_for
 from app.services.market_filter import filter_to_market
 from app.services.price_engine import compute_true_price, true_price_from_listing
 from app.services.product_matcher import Candidate, MatchResult, MatchType, match_products
+from app.services.product_normalizer import search_query_for
 from app.services.trust_service import FLAGGED, TrustService, verification_status
 
 logger = logging.getLogger(__name__)
@@ -61,8 +62,9 @@ class OfferService:
                 await catalog.store_review_insights(self.db, product, res.items[0].review_insights)
             else:
                 warnings.append("Amazon data temporarily unavailable.")
+        query = search_query_for(product.name, product.brand, product.specifications)
         for provider in registry.product_search_providers():
-            res = await provider.search_products(product.name, max_results=30)
+            res = await provider.search_products(query, max_results=30)
             providers_used.append(f"{provider.name}:{provider.engine}")
             if res.ok:
                 listings.extend(res.items)
@@ -109,9 +111,15 @@ class OfferService:
         warnings: list[str] = []
         providers: list[str] = []
         stale_after = timedelta(seconds=self.settings.OFFER_REFRESH_SECONDS)
+        thin_after = timedelta(seconds=self.settings.OFFER_THIN_REFRESH_SECONDS)
         newest = max((_aware(o.observed_at) for o in offers), default=None)
-        is_stale = newest is None or (datetime.now(timezone.utc) - newest) > stale_after
-        if refresh or (is_stale and not (self.settings.demo_mode and offers)):
+        age = None if newest is None else datetime.now(timezone.utc) - newest
+        is_stale = newest is None or age > stale_after
+        # One offer is not a comparison. A product that arrived with a single offer
+        # (a photo match, a pasted link) is refreshed sooner so the page can compare,
+        # still no more than once per OFFER_THIN_REFRESH_SECONDS.
+        is_thin = len(offers) < 2 and (age is None or age > thin_after)
+        if refresh or ((is_stale or is_thin) and not (self.settings.demo_mode and offers)):
             try:
                 meta = await self.refresh_offers(product)
                 providers += meta["providers"]
