@@ -96,6 +96,7 @@ class OfferService:
                     self.db, product, listing, tp, match, variant=variant, cache=cache
                 )
                 stored += 1
+        await catalog.flush_pending(self.db, cache)
         return {"providers": providers_used, "warnings": warnings, "stored": stored}
 
     async def compare(

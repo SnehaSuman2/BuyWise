@@ -57,6 +57,74 @@ class PersistCache:
     sellers: dict[tuple[uuid.UUID, str], Seller] = field(default_factory=dict)
     variants: dict[uuid.UUID, ProductVariant | None] = field(default_factory=dict)
     offers: dict[uuid.UUID, dict[tuple, Offer]] = field(default_factory=dict)
+    # Price observations for offers created in this request. A new offer has no id
+    # until the session flushes, so these are written by flush_pending() after one
+    # flush for all new offers, instead of one flush per offer.
+    pending_history: list[tuple[Offer, dict]] = field(default_factory=list)
+
+
+async def preload_for_products(
+    db: AsyncSession, product_ids: set[uuid.UUID], cache: PersistCache
+) -> None:
+    """Load every product's primary variant and existing offers in two queries."""
+    ids = [i for i in product_ids if i not in cache.variants or i not in cache.offers]
+    if not ids:
+        return
+    variants = (
+        (
+            await db.execute(
+                select(ProductVariant)
+                .where(ProductVariant.product_id.in_(ids))
+                .order_by(ProductVariant.created_at)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for pid in ids:
+        cache.variants.setdefault(pid, None)
+        cache.offers.setdefault(pid, {})
+    for v in variants:
+        if cache.variants.get(v.product_id) is None:
+            cache.variants[v.product_id] = v
+    offers = (
+        (await db.execute(select(Offer).where(Offer.product_id.in_(ids)))).scalars().unique().all()
+    )
+    for o in offers:
+        cache.offers[o.product_id][(o.retailer_id, o.seller_id, o.condition or "new")] = o
+
+
+async def flush_pending(db: AsyncSession, cache: PersistCache) -> None:
+    """One flush for every new offer, then their price observations, then one more."""
+    await db.flush()
+    for offer, history in cache.pending_history:
+        db.add(PriceHistory(offer_id=offer.id, **history))
+    cache.pending_history.clear()
+    await db.flush()
+
+
+async def load_offers_many(
+    db: AsyncSession, product_ids: set[uuid.UUID]
+) -> dict[uuid.UUID, list[Offer]]:
+    """Active offers for many products in one query, cheapest first per product."""
+    out: dict[uuid.UUID, list[Offer]] = {pid: [] for pid in product_ids}
+    if not product_ids:
+        return out
+    rows = (
+        (
+            await db.execute(
+                select(Offer)
+                .where(Offer.product_id.in_(list(product_ids)), Offer.is_active.is_(True))
+                .order_by(Offer.estimated_final_price.asc())
+            )
+        )
+        .scalars()
+        .unique()
+        .all()
+    )
+    for o in rows:
+        out.setdefault(o.product_id, []).append(o)
+    return out
 
 
 async def get_or_create_retailer(
@@ -359,8 +427,9 @@ async def record_offer(
         offer.retailer = retailer  # assign relationships explicitly so no lazy load is needed later
         offer.seller = seller
         db.add(offer)
-        await db.flush()
-        if cache is not None:
+        if cache is None:
+            await db.flush()
+        else:
             cache.offers.setdefault(product.id, {})[offer_key] = offer
     else:
         for k, v in values.items():
@@ -369,25 +438,26 @@ async def record_offer(
         offer.seller = seller
     # Only record price observations for listings we are confident are the same product.
     if match.match_type == MatchType.EXACT and match.confidence >= 0.7:
-        db.add(
-            PriceHistory(
-                offer_id=offer.id,
-                product_id=product.id,
-                variant_id=variant.id if variant else None,
-                retailer_id=retailer.id,
-                seller_id=seller.id if seller else None,
-                listed_price=true_price.listed_price,
-                shipping_price=true_price.shipping_price,
-                estimated_final_price=true_price.estimated_final_price,
-                currency=listing.currency or "INR",
-                availability=listing.availability,
-                source_provider=listing.source_provider,
-                source_url=listing.url,
-                confidence=match.confidence,
-                observed_at=observed,
-                is_demo=listing.is_demo,
-            )
+        history = dict(
+            product_id=product.id,
+            variant_id=variant.id if variant else None,
+            retailer_id=retailer.id,
+            seller_id=seller.id if seller else None,
+            listed_price=true_price.listed_price,
+            shipping_price=true_price.shipping_price,
+            estimated_final_price=true_price.estimated_final_price,
+            currency=listing.currency or "INR",
+            availability=listing.availability,
+            source_provider=listing.source_provider,
+            source_url=listing.url,
+            confidence=match.confidence,
+            observed_at=observed,
+            is_demo=listing.is_demo,
         )
+        if cache is not None:
+            cache.pending_history.append((offer, history))
+        else:
+            db.add(PriceHistory(offer_id=offer.id, **history))
     return offer
 
 
@@ -407,8 +477,37 @@ def implausible_price_floor(prices: list[float]) -> float | None:
     return reference * 0.2
 
 
+def retire_implausible_offers(product: Product, offers: list[Offer]) -> list[Offer]:
+    """Mark implausible offers inactive on the given list; return the ones that remain.
+
+    Pure over the objects it is given, so a caller that already holds a product's
+    offers pays no query. See deactivate_implausible_offers for the rule.
+    """
+    product_attrs = extract_attributes(product.name)
+    remaining = []
+    for offer in offers:
+        title_attrs = extract_attributes(offer.title or "")
+        if (title_attrs.is_accessory and not product_attrs.is_accessory) or title_attrs.is_rental:
+            offer.is_active = False
+        else:
+            remaining.append(offer)
+    exact = [o for o in remaining if o.match_type == MatchType.EXACT.value]
+    basis = exact if len(exact) >= 3 else remaining
+    floor = implausible_price_floor([float(o.estimated_final_price) for o in basis])
+    if floor is None:
+        return remaining
+    kept = []
+    for offer in remaining:
+        if float(offer.estimated_final_price) < floor:
+            offer.is_active = False
+        else:
+            kept.append(offer)
+    return kept
+
+
 async def deactivate_implausible_offers(db: AsyncSession, product: Product) -> int:
-    """Retire stored offers priced far below this product's other offers.
+    """Retire stored offers priced far below this product's other offers, or whose
+    own listing title is a spare part or a rental.
 
     Filtering fresh listings cannot remove an offer that was recorded before the
     filter existed, and such an offer keeps setting the product's lowest price for
@@ -418,26 +517,8 @@ async def deactivate_implausible_offers(db: AsyncSession, product: Product) -> i
     deleted, only marked inactive. Returns the number retired.
     """
     offers = await load_offers(db, product.id)
-    retired = 0
-    # An offer whose own listing title is a spare part or a rental was recorded
-    # before those words were recognised. It is not an offer for this product.
-    product_attrs = extract_attributes(product.name)
-    remaining = []
-    for offer in offers:
-        title_attrs = extract_attributes(offer.title or "")
-        if (title_attrs.is_accessory and not product_attrs.is_accessory) or title_attrs.is_rental:
-            offer.is_active = False
-            retired += 1
-        else:
-            remaining.append(offer)
-    exact = [o for o in remaining if o.match_type == MatchType.EXACT.value]
-    basis = exact if len(exact) >= 3 else remaining
-    floor = implausible_price_floor([float(o.estimated_final_price) for o in basis])
-    if floor is not None:
-        for offer in remaining:
-            if float(offer.estimated_final_price) < floor:
-                offer.is_active = False
-                retired += 1
+    remaining = retire_implausible_offers(product, offers)
+    retired = len(offers) - len(remaining)
     if retired:
         await db.flush()
     return retired

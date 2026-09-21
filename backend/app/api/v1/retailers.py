@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.security import get_optional_user
-from app.models import Offer, Retailer
+from app.models import Offer, Retailer, TrustScore
 from app.schemas.retailer import RetailerDetail
 from app.schemas.trust import TrustScoreResponse
 from app.services.trust_service import TrustService
@@ -19,17 +19,33 @@ router = APIRouter(prefix="/retailers", tags=["retailers"])
 @router.get("", response_model=list[RetailerDetail])
 async def list_retailers(db: AsyncSession = Depends(get_db)):
     retailers = (await db.execute(select(Retailer).order_by(Retailer.name))).scalars().all()
-    trust = TrustService(db)
+    # Three queries for the whole list. Two per retailer took 35 seconds for 326 rows.
+    counts = dict(
+        (
+            await db.execute(
+                select(Offer.retailer_id, func.count())
+                .where(Offer.is_active.is_(True))
+                .group_by(Offer.retailer_id)
+            )
+        ).all()
+    )
+    latest: dict = {}
+    for sc in (
+        (
+            await db.execute(
+                select(TrustScore)
+                .where(TrustScore.seller_id.is_(None))
+                .order_by(TrustScore.calculated_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    ):
+        latest.setdefault(sc.retailer_id, sc)
     out = []
     for r in retailers:
-        score = await trust._latest_score(retailer_id=r.id)
-        count = (
-            await db.execute(
-                select(func.count())
-                .select_from(Offer)
-                .where(Offer.retailer_id == r.id, Offer.is_active.is_(True))
-            )
-        ).scalar_one()
+        score = latest.get(r.id)
+        count = counts.get(r.id, 0)
         out.append(
             RetailerDetail(
                 **{

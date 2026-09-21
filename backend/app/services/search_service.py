@@ -675,6 +675,7 @@ class SearchService:
         results: list[ProductSearchResult] = []
         seen: dict[uuid.UUID, ListingGroup] = {}
         cache = catalog.PersistCache()
+        planned: list[tuple[ListingGroup, Product, bool]] = []
         for group in groups[:24]:
             ref_listing = group.listings[0][0]
             identifiers = dict(group.reference.identifiers)
@@ -708,6 +709,14 @@ class SearchService:
                     is_demo=all(l.is_demo for l, _ in group.listings),
                 )
             group.product = product
+            planned.append((group, product, attached))
+
+        # Every product's variant and existing offers in two queries, then the
+        # offers themselves with one flush for all of them and one for their price
+        # observations. This was one to four queries per listing before, and at
+        # ~50ms per round trip from the API host that was most of the search time.
+        await catalog.preload_for_products(self.db, {p.id for _, p, _ in planned}, cache)
+        for group, product, attached in planned:
             variant = await catalog.primary_variant(self.db, product, cache=cache)
             for listing, match in group.listings:
                 tp = true_price_from_listing(listing)
@@ -726,21 +735,33 @@ class SearchService:
             # row). Record it once, keeping the first group for match attribution.
             if product.id not in seen:
                 seen[product.id] = group
+        await catalog.flush_pending(self.db, cache)
 
         # Build results only after every group is persisted, so offer counts and price
         # ranges reflect all offers rather than however many existed mid-loop. Offers
         # recorded before today's filters existed are retired here if implausible.
+        offers_by_product = await catalog.load_offers_many(self.db, set(seen))
+        retired_any = False
         for product_id, group in seen.items():
             product = group.product  # created or loaded above in this same session
-            if product is not None:
-                await catalog.deactivate_implausible_offers(self.db, product)
-                results.append(await self._result_for_product(product, group))
+            if product is None:
+                continue
+            offers = offers_by_product.get(product_id, [])
+            remaining = catalog.retire_implausible_offers(product, offers)
+            retired_any = retired_any or len(remaining) != len(offers)
+            results.append(await self._result_for_product(product, group, offers=remaining))
+        if retired_any:
+            await self.db.flush()
         return results
 
     async def _result_for_product(
-        self, product: Product, group: ListingGroup | None
+        self,
+        product: Product,
+        group: ListingGroup | None,
+        offers: list | None = None,
     ) -> ProductSearchResult:
-        offers = await catalog.load_offers(self.db, product.id)
+        if offers is None:
+            offers = await catalog.load_offers(self.db, product.id)
         exact = [o for o in offers if o.match_type == MatchType.EXACT.value]
         prices = [float(o.estimated_final_price) for o in exact] or [
             float(o.estimated_final_price) for o in offers
