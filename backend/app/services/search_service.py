@@ -60,6 +60,11 @@ def group_listings(
         )
         best: tuple[ListingGroup, MatchResult] | None = None
         for group in groups:
+            # A refurbished or used listing is not the same product as a sealed one,
+            # however identical the title. It gets its own group, and so its own
+            # card and price, instead of becoming a "cheapest offer" for the new one.
+            if (listing.condition or "new") != (group.listings[0][0].condition or "new"):
+                continue
             res = match_products(group.reference, cand)
             if res.match_type == MatchType.EXACT and res.confidence >= min_confidence:
                 if best is None or res.confidence > best[1].confidence:

@@ -227,3 +227,26 @@ async def test_outage_shows_one_clear_warning(client, monkeypatch):
     body = (await client.post("/api/v1/search", json={"query": "sony wh-1000xm5"})).json()
     outage = [w for w in body["meta"]["warnings"] if "temporarily unavailable" in w]
     assert len(outage) == 1 and "seen before" in outage[0]
+
+
+@pytest.mark.asyncio
+async def test_refurbished_listings_never_share_a_product_with_sealed_ones(client, monkeypatch):
+    items = [
+        listing("Apple iPhone 17 256GB Green", "Croma", "croma.com", 137193),
+        listing("Apple iPhone 17 256GB Green", "Flipkart", "flipkart.com", 136900),
+        listing(
+            "Apple iPhone 17 - Refurbished - Superb Grade | 256GB | Green",
+            "Ovantica",
+            "ovantica.com",
+            78999,
+        ),
+    ]
+    monkeypatch.setattr(registry, "product_search_providers", lambda: [FakeSearch(items)])
+    monkeypatch.setattr(registry, "retailer_search_providers", lambda: [FakeRetailerSearch()])
+    r = await client.post("/api/v1/search", json={"query": "iphone 17 256gb green"})
+    assert r.status_code == 200, r.text
+    results = r.json()["results"]
+    sealed = next(x for x in results if "Refurbished" not in x["name"])
+    refurb = next(x for x in results if "Refurbished" in x["name"])
+    assert "Ovantica" not in sealed["retailers"] and sealed["lowest_price"] == 136900
+    assert refurb["retailers"] == ["Ovantica"] and refurb["lowest_price"] == 78999
