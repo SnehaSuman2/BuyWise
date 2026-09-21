@@ -122,36 +122,54 @@ def filter_rentals(listings: list, query_text: str | None) -> tuple[list, int]:
     return kept, dropped
 
 
-def drop_implausible_prices(groups: list["ListingGroup"]) -> int:
-    """Remove a listing priced far below the rest of its own group.
+def filter_implausible_price_outliers(listings: list) -> tuple[list, int]:
+    """Drop a listing priced far below others that are almost certainly the same
+    device line, even when they never join the same product group.
 
-    Grouping matches on title and identifiers, which is correct — price must never
-    decide whether two listings are the same product. But a spam or mismatched
-    listing sometimes carries the exact right title at a small fraction of every
-    other listing's price (a real case: a ₹148 "iPhone 17 Pro" sitting beside nine
-    listings above ₹1,00,000). That is not a real price for the item; it is
-    evidence the listing is not actually selling one.
+    group_listings() only merges listings that reach 75% match confidence, and a
+    bare title ("Apple iPhone 17 Pro") loses confidence against a fuller one
+    ("Apple iPhone 17 Pro 512GB Silver MG8K4HN/A") for stating no variant details —
+    exactly the gap a spam or mismatched listing hides in. A real case: a ₹148
+    "Apple iPhone 17 Pro" from Meesho sat alone, ungrouped, beside genuine listings
+    of the same phone above ₹1,20,000 — never compared against them because it
+    never joined their group.
 
-    The comparison is entirely self-referential, against this group's own other
-    listings, so no external price data is assumed. Only groups with at least 3
-    priced listings are checked, so one early or unusual listing cannot become
-    "the group" on its own, and the bar (a fifth of the median) sits far below any
-    ordinary retailer discount.
+    This checks price plausibility on its own, before grouping, clustered only by
+    the model's line token (so "iPhone 17 Pro" and "iPhone 17 Pro Max" are never
+    compared against each other — they are different products with legitimately
+    different prices). The comparison is entirely self-referential, against other
+    listings identified as the same line in this same search, so no external price
+    data is assumed. A cluster needs at least 3 priced listings before anything is
+    checked, so one early or unusual listing cannot become "the family" on its own,
+    and the bar — a fifth of the median — sits far below any ordinary discount.
     """
+    families: dict[str, list] = {}
+    unclustered = []
+    for listing in listings:
+        tokens = extract_attributes(listing.title, None, listing.brand).model_tokens
+        if tokens and listing.price:
+            families.setdefault(tokens[0], []).append(listing)
+        else:
+            unclustered.append(listing)
+
+    kept = list(unclustered)
     dropped = 0
-    for group in groups:
-        priced = [pair for pair in group.listings if pair[0].price]
-        if len(priced) < 3:
+    for family in families.values():
+        if len(family) < 3:
+            kept.extend(family)
             continue
-        prices = sorted(listing.price for listing, _ in priced)
+        prices = sorted(listing.price for listing in family)
         median = prices[len(prices) // 2]
         if not median or median <= 0:
+            kept.extend(family)
             continue
         floor = median * 0.2
-        kept = [pair for pair in group.listings if not (pair[0].price and pair[0].price < floor)]
-        dropped += len(group.listings) - len(kept)
-        group.listings = kept
-    return dropped
+        for listing in family:
+            if listing.price < floor:
+                dropped += 1
+            else:
+                kept.append(listing)
+    return kept, dropped
 
 
 def query_from_url(url: str) -> str:
@@ -261,14 +279,14 @@ class SearchService:
         if dropped_rentals:
             warnings.append(f"Hid {dropped_rentals} rental listing(s) — not a purchase price.")
 
-        groups = group_listings(listings)
-        dropped_implausible = drop_implausible_prices(groups)
-        groups = [g for g in groups if g.listings]
+        listings, dropped_implausible = filter_implausible_price_outliers(listings)
         if dropped_implausible:
             warnings.append(
                 f"Hid {dropped_implausible} listing(s) priced far below the rest for the "
                 f"same product (likely spam or a mismatched listing)."
             )
+
+        groups = group_listings(listings)
         if reference is not None:
             for g in groups:
                 g.reference_match = match_products(reference, g.reference)

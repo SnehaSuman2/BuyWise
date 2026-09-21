@@ -7,7 +7,7 @@ from app.providers import registry
 from app.providers.base import NormalizedListing, ProviderResult
 from app.services.product_matcher import Candidate, MatchType, match_products
 from app.services.product_normalizer import extract_attributes
-from app.services.search_service import drop_implausible_prices, group_listings
+from app.services.search_service import filter_implausible_price_outliers
 
 
 def test_generation_and_tier_both_differing_is_not_a_sibling_match():
@@ -58,43 +58,61 @@ def _listing(title, retailer, price):
     )
 
 
-def test_implausible_price_outlier_is_dropped_from_its_own_group():
+def test_implausible_price_outlier_is_dropped_without_ever_grouping():
+    """The real bug: a bare-title spam listing scores just under the 0.75 grouping
+    threshold against fuller listings of the same phone, so it never shares a group
+    with them and a post-grouping check would never see it. This one is dropped by
+    line-token clustering before grouping happens at all."""
     listings = [
-        _listing("Apple iPhone 17 Pro", "Amazon.in", 134900),
-        _listing("Apple iPhone 17 Pro", "Croma", 129900),
-        _listing("Apple iPhone 17 Pro", "Flipkart", 132900),
+        _listing("Apple iPhone 17 Pro 512GB Silver MG8K4HN/A", "Amazon.in", 149989),
+        _listing("Apple iPhone 17 Pro 1TB Cosmic Orange", "Croma", 174900),
+        _listing("Apple iPhone 17 Pro 256GB Orange", "Flipkart", 124999),
         _listing("Apple iPhone 17 Pro", "Meesho", 148),  # spam / mismatched listing
     ]
-    groups = group_listings(listings)
-    assert len(groups) == 1 and len(groups[0].listings) == 4
-    dropped = drop_implausible_prices(groups)
+    kept, dropped = filter_implausible_price_outliers(listings)
     assert dropped == 1
-    prices = sorted(listing.price for listing, _ in groups[0].listings)
-    assert prices == [129900, 132900, 134900]
+    assert 148 not in {listing.price for listing in kept}
+    assert {149989, 174900, 124999} <= {listing.price for listing in kept}
 
 
-def test_implausible_price_filter_requires_at_least_three_priced_listings():
+def test_implausible_price_filter_never_compares_across_different_tiers():
+    """iPhone 17 Pro and iPhone 17 Pro Max are different products with legitimately
+    different prices; the low end of one line must never sink the other."""
+    listings = [
+        _listing("Apple iPhone 17 Pro 256GB", "Amazon.in", 124999),
+        _listing("Apple iPhone 17 Pro 512GB", "Croma", 149989),
+        _listing("Apple iPhone 17 Pro 1TB", "Flipkart", 174900),
+        _listing("Apple iPhone 17 Pro Max 512GB", "Amazon.in", 169900),
+        _listing("Apple iPhone 17 Pro Max 1TB", "Croma", 199900),
+        _listing("Apple iPhone 17 Pro Max", "Meesho", 273),  # spam
+    ]
+    kept, dropped = filter_implausible_price_outliers(listings)
+    assert dropped == 1
+    assert 273 not in {listing.price for listing in kept}
+    assert 124999 in {listing.price for listing in kept}  # the cheapest real Pro survives
+    assert 169900 in {listing.price for listing in kept}  # the cheapest real Pro Max survives
+
+
+def test_implausible_price_filter_requires_at_least_three_priced_listings_in_the_family():
     """A lone cheap listing with nothing to compare against is left alone — this
     is a self-referential check, not an absolute price floor."""
     listings = [
-        _listing("Apple iPhone 17 Pro", "Amazon.in", 134900),
+        _listing("Apple iPhone 17 Pro 256GB", "Amazon.in", 134900),
         _listing("Apple iPhone 17 Pro", "Meesho", 148),
     ]
-    groups = group_listings(listings)
-    assert drop_implausible_prices(groups) == 0
-    assert len(groups[0].listings) == 2
+    kept, dropped = filter_implausible_price_outliers(listings)
+    assert dropped == 0 and len(kept) == 2
 
 
 def test_implausible_price_filter_tolerates_real_discounts():
     """A genuine sale price (well above the 20% floor) must survive."""
     listings = [
-        _listing("Apple iPhone 17 Pro", "Amazon.in", 134900),
-        _listing("Apple iPhone 17 Pro", "Croma", 129900),
-        _listing("Apple iPhone 17 Pro", "Flipkart", 99900),  # ~26% off, real sale
+        _listing("Apple iPhone 17 Pro 256GB", "Amazon.in", 134900),
+        _listing("Apple iPhone 17 Pro 512GB", "Croma", 129900),
+        _listing("Apple iPhone 17 Pro 1TB", "Flipkart", 99900),  # ~26% off, real sale
     ]
-    groups = group_listings(listings)
-    assert drop_implausible_prices(groups) == 0
-    assert len(groups[0].listings) == 3
+    kept, dropped = filter_implausible_price_outliers(listings)
+    assert dropped == 0 and len(kept) == 3
 
 
 class FakeSearch:
