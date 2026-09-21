@@ -65,18 +65,51 @@ async function parseError(res: Response): Promise<ApiError> {
   return new ApiError(detail, res.status);
 }
 
+/**
+ * The API runs on a host that shuts the instance down after a quiet period and
+ * boots it on the next request, which can take a minute or more. A fetch that
+ * fails outright, times out, or gets a gateway error during that window is not a
+ * broken backend, it is a booting one. Retry with back-off for up to ninety
+ * seconds and tell the page what is happening, rather than surfacing an error.
+ */
+const WAKE_STATUSES = new Set([502, 503, 504]);
+export type ApiState = "waking" | "ok";
+function emitApiState(state: ApiState): void {
+  if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent<ApiState>("buywise:api", { detail: state }));
+}
+function attemptSignal(ms: number): AbortSignal | undefined {
+  return typeof AbortSignal !== "undefined" && "timeout" in AbortSignal ? AbortSignal.timeout(ms) : undefined;
+}
+async function fetchWaking(url: string, init: RequestInit, budgetMs = 90_000): Promise<Response> {
+  const started = Date.now();
+  let attempt = 0;
+  for (;;) {
+    try {
+      const res = await fetch(url, { ...init, signal: attemptSignal(25_000) });
+      if (!WAKE_STATUSES.has(res.status)) {
+        if (attempt > 0) emitApiState("ok");
+        return res;
+      }
+    } catch {
+      /* network error or timeout: fall through to retry */
+    }
+    if (Date.now() - started > budgetMs) {
+      emitApiState("ok");
+      throw new ApiError("BuyWise's server is not responding right now. Please try again in a minute.", 0);
+    }
+    attempt += 1;
+    emitApiState("waking");
+    await new Promise((r) => setTimeout(r, Math.min(2000 * 2 ** (attempt - 1), 15_000)));
+  }
+}
+
 /** Browser-side request with auth + refresh. */
 export async function request<T>(path: string, options: RequestInit = {}, retry = true): Promise<T> {
   const headers: Record<string, string> = { ...(options.headers as Record<string, string> | undefined) };
   if (options.body && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
   const token = tokenStore.access;
   if (token) headers["Authorization"] = `Bearer ${token}`;
-  let res: Response;
-  try {
-    res = await fetch(`${API_BASE}${V1}${path}`, { ...options, headers });
-  } catch {
-    throw new ApiError("Cannot reach the BuyWise API. Is the backend running?", 0);
-  }
+  const res = await fetchWaking(`${API_BASE}${V1}${path}`, { ...options, headers });
   if (res.status === 401 && retry && tokenStore.refresh && !path.startsWith("/auth/")) {
     if (await tryRefresh()) return request<T>(path, options, false);
   }
@@ -85,15 +118,25 @@ export async function request<T>(path: string, options: RequestInit = {}, retry 
   return (await res.json()) as T;
 }
 
-/** Server-side fetch (Next.js server components). No auth, never cached. */
+/**
+ * Server-side fetch (Next.js server components). No auth, never cached. Retries
+ * briefly through a backend cold start so a product link does not render as
+ * "not found" while the API boots; bounded so the page still renders in time.
+ */
 export async function serverGet<T>(path: string): Promise<T | null> {
-  try {
-    const res = await fetch(`${SERVER_BASE}${V1}${path}`, { cache: "no-store" });
-    if (!res.ok) return null;
-    return (await res.json()) as T;
-  } catch {
-    return null;
+  const delays = [0, 3000, 6000];
+  for (const delay of delays) {
+    if (delay) await new Promise((r) => setTimeout(r, delay));
+    try {
+      const res = await fetch(`${SERVER_BASE}${V1}${path}`, { cache: "no-store", signal: attemptSignal(12_000) });
+      if (WAKE_STATUSES.has(res.status)) continue;
+      if (!res.ok) return null;
+      return (await res.json()) as T;
+    } catch {
+      continue;
+    }
   }
+  return null;
 }
 
 export const api = {

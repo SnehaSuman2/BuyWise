@@ -1,0 +1,21 @@
+# Render's free tier shuts the API instance down after 15 idle minutes and boots it
+# on the next request, which can take minutes and looks to a visitor like a dead
+# backend. A health ping every 10 minutes keeps it awake. This is a stopgap: the
+# proper fix is a paid instance, which never sleeps. Scheduled runs can be delayed
+# by GitHub, so an occasional cold start is still possible. No secrets needed.
+name: Keep API warm
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping health endpoint (long timeout so a cold start completes)
+        run: |
+          curl --silent --show-error --max-time 240 \
+            -o /dev/null -w "HTTP %{http_code} in %{time_total}s\n" \
+            https://buywise-api-vaai.onrender.com/health

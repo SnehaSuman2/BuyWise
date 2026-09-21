@@ -4,6 +4,7 @@ import Header from "@/components/layout/Header";
 import Footer from "@/components/layout/Footer";
 import DemoBanner from "@/components/layout/DemoBanner";
 import Analytics from "@/components/layout/Analytics";
+import ApiStatusBanner from "@/components/layout/ApiStatusBanner";
 import { AuthProvider } from "@/lib/auth";
 import { MetaProvider } from "@/lib/meta";
 
@@ -26,6 +27,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="min-h-screen bg-background text-foreground antialiased">
         <MetaProvider>
           <AuthProvider>
+            <ApiStatusBanner />
             <DemoBanner />
             <Header />
             <main className="min-h-[calc(100vh-4rem)]">{children}</main>
