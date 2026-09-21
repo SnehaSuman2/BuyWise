@@ -223,6 +223,10 @@ _INTENT_WORDS = (
     "need",
     "looking",
     "purchase",
+    "buying",
+    "purchasing",
+    "getting",
+    "ordering",
 )
 # Product words a shopper types in a hurry. A token within one edit of one of these
 # is taken to mean it ("ihpone" is "iphone"); anything longer than one edit is left alone.
