@@ -731,6 +731,7 @@ class SearchService:
                     source_provider=ref_listing.source_provider,
                     source_url=ref_listing.url,
                     is_demo=all(l.is_demo for l, _ in group.listings),
+                    condition=ref_listing.condition or "new",
                 )
             group.product = product
             planned.append((group, product, attached))

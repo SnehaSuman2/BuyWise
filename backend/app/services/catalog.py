@@ -250,10 +250,17 @@ async def upsert_product(
     source_provider: str = "unknown",
     source_url: str | None = None,
     is_demo: bool = False,
+    condition: str = "new",
 ) -> Product:
     identifiers = clean_identifiers(identifiers)
     attrs = attrs or extract_attributes(title, specifications, brand)
     key = canonical_key(attrs, identifiers)
+    if condition != "new":
+        # A refurbished or used item is its own product. It shares the sealed
+        # item's model, storage, colour and often its ASIN, so without this it
+        # would be found by key or identifier and merged into the sealed product.
+        key = f"{key}:{condition}"
+        identifiers = {}
 
     async def _find_existing() -> Product | None:
         result = await db.execute(select(Product).where(Product.canonical_key == key))
