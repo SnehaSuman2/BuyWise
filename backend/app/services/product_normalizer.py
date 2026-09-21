@@ -138,6 +138,8 @@ ACCESSORY_WORDS = {
     # Spare/replacement parts. A listing titled exactly "Apple iPhone 17 Pro" that is
     # actually a spare back panel is worse than a mislabelled case: nothing in the
     # ordinary product title marks it, only this vocabulary does.
+    "housing",
+    "body housing",
     "full housing",
     "housing panel",
     "body panel",

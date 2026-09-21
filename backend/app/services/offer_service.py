@@ -116,6 +116,13 @@ class OfferService:
             except Exception as exc:
                 logger.warning("Offer refresh failed for %s: %s", product_id, type(exc).__name__)
                 warnings.append("Live offer refresh failed; showing last known offers.")
+        retired = await catalog.deactivate_implausible_offers(self.db, product)
+        if retired:
+            offers = await catalog.load_offers(self.db, product_id)
+            warnings.append(
+                f"Hid {retired} offer(s) priced far below this product's other offers "
+                f"(likely spam or a mismatched listing)."
+            )
         trust_map = await self.trust.trust_summaries({o.retailer_id for o in offers})
         responses = [self._offer_response(o, trust_map.get(o.retailer_id)) for o in offers]
 

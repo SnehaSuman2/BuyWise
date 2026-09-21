@@ -322,6 +322,48 @@ async def record_offer(
     return offer
 
 
+def implausible_price_floor(prices: list[float]) -> float | None:
+    """The price below which a listing is not plausibly the same item as the rest.
+
+    Reference is the upper quartile of the prices, not the median: spam is cheap and
+    genuine listings sit at the top, so when spam makes up half of a small family the
+    median is itself a spam price (seen live: ₹273, ₹6,607 and ₹2,12,923 for one
+    phone gave a median of ₹6,607 and the ₹6,607 case survived). Needs at least
+    three prices; the floor is a fifth of the reference, far below any real discount.
+    """
+    priced = sorted(p for p in prices if p and p > 0)
+    if len(priced) < 3:
+        return None
+    reference = priced[min(len(priced) - 1, (len(priced) * 3) // 4)]
+    return reference * 0.2
+
+
+async def deactivate_implausible_offers(db: AsyncSession, product: Product) -> int:
+    """Retire stored offers priced far below this product's other offers.
+
+    Filtering fresh listings cannot remove an offer that was recorded before the
+    filter existed, and such an offer keeps setting the product's lowest price for
+    ever. This applies the same self-referential rule to what is already on record,
+    every time the product is persisted or viewed, so the catalogue heals itself.
+    Exact-match offers are the reference when there are enough of them; nothing is
+    deleted, only marked inactive. Returns the number retired.
+    """
+    offers = await load_offers(db, product.id)
+    exact = [o for o in offers if o.match_type == MatchType.EXACT.value]
+    basis = exact if len(exact) >= 3 else offers
+    floor = implausible_price_floor([float(o.estimated_final_price) for o in basis])
+    if floor is None:
+        return 0
+    retired = 0
+    for offer in offers:
+        if float(offer.estimated_final_price) < floor:
+            offer.is_active = False
+            retired += 1
+    if retired:
+        await db.flush()
+    return retired
+
+
 async def store_review_insights(db: AsyncSession, product: Product, insights) -> None:
     """Persist retailer-aggregated review themes as this product's review analysis.
 

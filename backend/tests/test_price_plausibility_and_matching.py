@@ -172,3 +172,92 @@ async def test_search_end_to_end_hides_wrong_generation_spam_and_rentals(client,
     assert "different model" in warnings
     assert "rental" in warnings
     assert "priced far below" in warnings
+
+
+def test_housing_spare_parts_are_accessories():
+    assert extract_attributes("Full Body Housing for Apple iPhone 17 Pro - Black").is_accessory
+    assert not extract_attributes("Apple iPhone 17 Pro 256GB Black").is_accessory
+
+
+def test_cheap_spam_cannot_become_the_reference_price():
+    """Seen live: three listings for one line at ₹273, ₹6,607 and ₹2,12,923. A median
+    reference is ₹6,607 and the ₹6,607 case survives. The upper-quartile reference
+    drops both."""
+    listings = [
+        _listing("Apple iPhone 17 Pro Max, US Version, 256GB", "Amazon.in", 212923),
+        _listing("Apple iPhone 17 Pro Max", "Meesho", 273),
+        _listing("iPhone 17 Pro Max AirX Flux Gray", "rhinoshield.io", 6607.79),
+    ]
+    kept, dropped = filter_implausible_price_outliers(listings)
+    assert dropped == 2 and [listing.price for listing in kept] == [212923]
+
+
+@pytest.mark.asyncio
+async def test_stale_spam_offer_is_retired_once_real_offers_arrive(client, monkeypatch):
+    """A spam offer recorded before the filters existed keeps setting the product's
+    lowest price for ever unless something retires it. Persisting the product again
+    with enough genuine offers must do exactly that, and the product page must agree."""
+    monkeypatch.setattr(registry, "retailer_search_providers", lambda: [FakeRetailerSearch()])
+
+    # Search 1: too few listings for the family filter, so the spam is persisted.
+    first = [
+        _listing("Apple iPhone 17 Pro 256GB Black", "Amazon.in", 134900),
+        _listing("Apple iPhone 17 Pro 256GB Black", "Meesho", 148),
+    ]
+    monkeypatch.setattr(registry, "product_search_providers", lambda: [FakeSearch(first)])
+    r1 = await client.post("/api/v1/search", json={"query": "iphone 17 pro 256gb"})
+    assert r1.status_code == 200, r1.text
+    product = next(x for x in r1.json()["results"] if "Pro 256GB" in x["name"])
+    assert product["lowest_price"] == 148  # the bug, before enough evidence exists
+
+    # Search 2: genuine offers from other retailers join the same product.
+    second = [
+        _listing("Apple iPhone 17 Pro 256GB Black", "Croma", 129900),
+        _listing("Apple iPhone 17 Pro 256GB Black", "Flipkart", 132900),
+        _listing("Apple iPhone 17 Pro 256GB Black", "Vijay Sales", 131900),
+    ]
+    monkeypatch.setattr(registry, "product_search_providers", lambda: [FakeSearch(second)])
+    r2 = await client.post("/api/v1/search", json={"query": "iphone 17 pro 256gb"})
+    healed = next(x for x in r2.json()["results"] if x["id"] == product["id"])
+    assert healed["lowest_price"] == 129900, healed
+    assert "Meesho" not in healed["retailers"]
+
+    offers = await client.get(f"/api/v1/products/{product['id']}/offers")
+    assert offers.status_code == 200
+    prices = sorted(o["price"]["estimated_final_price"] for o in offers.json()["offers"])
+    assert 148 not in prices and prices[0] == 129900
+
+
+def test_result_cards_with_only_spam_prices_are_hidden():
+    import uuid
+
+    from app.schemas.product import ProductSearchResult
+
+    def card(name, price):
+        return ProductSearchResult(
+            id=uuid.uuid4(),
+            name=name,
+            brand="Apple",
+            category=None,
+            image=None,
+            lowest_price=price,
+            highest_price=price,
+            offer_count=1,
+            retailers=["x"],
+            average_rating=None,
+            match=None,
+            is_demo=False,
+        )
+
+    from app.services.search_service import hide_implausible_results
+
+    results = [
+        card("Apple iPhone 17 Pro Max, US Version, 256GB", 212923),
+        card("Apple iPhone 17 Pro Max 1TB", 199900),
+        card("Apple iPhone 17 Pro Max", 273),
+        card("iPhone 17 Pro Max AirX Flux Gray", 6607.79),
+        card("Apple iPhone 17 256GB White", 68999),  # different line, untouched
+    ]
+    kept, hidden = hide_implausible_results(results)
+    assert hidden == 2
+    assert {r.lowest_price for r in kept} == {212923, 199900, 68999}

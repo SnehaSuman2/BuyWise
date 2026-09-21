@@ -155,21 +155,40 @@ def filter_implausible_price_outliers(listings: list) -> tuple[list, int]:
     kept = list(unclustered)
     dropped = 0
     for family in families.values():
-        if len(family) < 3:
+        floor = catalog.implausible_price_floor([listing.price for listing in family])
+        if floor is None:
             kept.extend(family)
             continue
-        prices = sorted(listing.price for listing in family)
-        median = prices[len(prices) // 2]
-        if not median or median <= 0:
-            kept.extend(family)
-            continue
-        floor = median * 0.2
         for listing in family:
             if listing.price < floor:
                 dropped += 1
             else:
                 kept.append(listing)
     return kept, dropped
+
+
+def hide_implausible_results(
+    results: list[ProductSearchResult],
+) -> tuple[list[ProductSearchResult], int]:
+    """Drop result cards whose price is implausible against their model family.
+
+    A product whose only stored offers are spam (a ₹6,607 "iPhone 17 Pro Max" from
+    a case maker) has nothing inside itself to compare against, so the per-product
+    check cannot touch it. Across the result set it does have neighbours: the other
+    products of the same line. Same rule, same floor, keyed by the line token.
+    """
+    families: dict[str, list[ProductSearchResult]] = {}
+    for r in results:
+        tokens = extract_attributes(r.name, None, r.brand).model_tokens
+        if tokens and r.lowest_price:
+            families.setdefault(tokens[0], []).append(r)
+    hidden: set = set()
+    for family in families.values():
+        floor = catalog.implausible_price_floor([r.lowest_price for r in family])
+        if floor is None:
+            continue
+        hidden.update(r.id for r in family if r.lowest_price < floor)
+    return [r for r in results if r.id not in hidden], len(hidden)
 
 
 def query_from_url(url: str) -> str:
@@ -321,6 +340,12 @@ class SearchService:
             if ref:
                 results.insert(0, await self._result_for_product(ref, None))
 
+        results, hidden_cards = hide_implausible_results(results)
+        if hidden_cards:
+            warnings.append(
+                f"Hid {hidden_cards} product(s) whose only prices are far below the rest "
+                f"of the same model (likely spam or mismatched listings)."
+            )
         results = self._sort(results, request.sort_by)
         total = len(results)
         start = (request.page - 1) * request.page_size
@@ -665,10 +690,12 @@ class SearchService:
                 seen[product.id] = group
 
         # Build results only after every group is persisted, so offer counts and price
-        # ranges reflect all offers rather than however many existed mid-loop.
+        # ranges reflect all offers rather than however many existed mid-loop. Offers
+        # recorded before today's filters existed are retired here if implausible.
         for product_id, group in seen.items():
             product = await catalog.load_product(self.db, product_id)
             if product is not None:
+                await catalog.deactivate_implausible_offers(self.db, product)
                 results.append(await self._result_for_product(product, group))
         return results
 
