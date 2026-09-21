@@ -227,6 +227,15 @@ async def test_stale_spam_offer_is_retired_once_real_offers_arrive(client, monke
     prices = sorted(o["price"]["estimated_final_price"] for o in offers.json()["offers"])
     assert 148 not in prices and prices[0] == 129900
 
+    # The spam offer's price observations go with it: history must not keep
+    # showing ₹148 as the product's current or lowest price.
+    history = await client.get(f"/api/v1/products/{product['id']}/history?days=90")
+    assert history.status_code == 200
+    stats = history.json()["stats"]
+    assert stats is not None and stats["current_price"] >= 129900, stats
+    assert stats["historical_low"] >= 129900, stats
+    assert all(p["price"] >= 129900 for p in history.json()["history"])
+
 
 def test_result_cards_with_only_spam_prices_are_hidden():
     import uuid

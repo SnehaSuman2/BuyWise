@@ -9,7 +9,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -477,32 +477,66 @@ def implausible_price_floor(prices: list[float]) -> float | None:
     return reference * 0.2
 
 
-def retire_implausible_offers(product: Product, offers: list[Offer]) -> list[Offer]:
-    """Mark implausible offers inactive on the given list; return the ones that remain.
+@dataclass
+class Retirement:
+    remaining: list[Offer]
+    retired: list[Offer]
+    floor: float | None
+
+
+def retire_implausible_offers(product: Product, offers: list[Offer]) -> Retirement:
+    """Mark implausible offers inactive on the given list.
 
     Pure over the objects it is given, so a caller that already holds a product's
     offers pays no query. See deactivate_implausible_offers for the rule.
     """
     product_attrs = extract_attributes(product.name)
-    remaining = []
+    remaining, retired = [], []
     for offer in offers:
         title_attrs = extract_attributes(offer.title or "")
         if (title_attrs.is_accessory and not product_attrs.is_accessory) or title_attrs.is_rental:
             offer.is_active = False
+            retired.append(offer)
         else:
             remaining.append(offer)
     exact = [o for o in remaining if o.match_type == MatchType.EXACT.value]
     basis = exact if len(exact) >= 3 else remaining
     floor = implausible_price_floor([float(o.estimated_final_price) for o in basis])
     if floor is None:
-        return remaining
+        return Retirement(remaining, retired, None)
     kept = []
     for offer in remaining:
         if float(offer.estimated_final_price) < floor:
             offer.is_active = False
+            retired.append(offer)
         else:
             kept.append(offer)
-    return kept
+    return Retirement(kept, retired, floor)
+
+
+async def purge_implausible_history(
+    db: AsyncSession, product: Product, retirement: Retirement
+) -> int:
+    """Remove price observations that were never observations of this product.
+
+    An offer retired as a spare part, a rental or an implausible price recorded
+    observations while it was believed to be the product, and the history card
+    reads observations, not offers: a ₹273 "iPhone 17 Pro Max" kept showing as the
+    product's current lowest price a day after its offer was retired. Its rows go,
+    along with any older row below the same self-referential floor, so history
+    already on record heals the same way offers do. Returns rows removed.
+    """
+    conditions = []
+    if retirement.retired:
+        conditions.append(PriceHistory.offer_id.in_([o.id for o in retirement.retired]))
+    if retirement.floor is not None:
+        conditions.append(PriceHistory.estimated_final_price < retirement.floor)
+    if not conditions:
+        return 0
+    result = await db.execute(
+        delete(PriceHistory).where(PriceHistory.product_id == product.id, or_(*conditions))
+    )
+    return int(result.rowcount or 0)
 
 
 async def deactivate_implausible_offers(db: AsyncSession, product: Product) -> int:
@@ -517,11 +551,11 @@ async def deactivate_implausible_offers(db: AsyncSession, product: Product) -> i
     deleted, only marked inactive. Returns the number retired.
     """
     offers = await load_offers(db, product.id)
-    remaining = retire_implausible_offers(product, offers)
-    retired = len(offers) - len(remaining)
-    if retired:
+    retirement = retire_implausible_offers(product, offers)
+    purged = await purge_implausible_history(db, product, retirement)
+    if retirement.retired or purged:
         await db.flush()
-    return retired
+    return len(retirement.retired)
 
 
 async def store_review_insights(db: AsyncSession, product: Product, insights) -> None:

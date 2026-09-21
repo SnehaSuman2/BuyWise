@@ -763,9 +763,13 @@ class SearchService:
             if product is None:
                 continue
             offers = offers_by_product.get(product_id, [])
-            remaining = catalog.retire_implausible_offers(product, offers)
-            retired_any = retired_any or len(remaining) != len(offers)
-            results.append(await self._result_for_product(product, group, offers=remaining))
+            retirement = catalog.retire_implausible_offers(product, offers)
+            if retirement.retired or retirement.floor is not None:
+                purged = await catalog.purge_implausible_history(self.db, product, retirement)
+                retired_any = retired_any or bool(retirement.retired) or purged > 0
+            results.append(
+                await self._result_for_product(product, group, offers=retirement.remaining)
+            )
         if retired_any:
             await self.db.flush()
         return results
