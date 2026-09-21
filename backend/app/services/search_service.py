@@ -24,7 +24,7 @@ from app.data.retailers import resolve_retailer
 from app.models import Product, Search
 from app.providers import registry
 from app.providers.base import NormalizedListing, ProviderResult
-from app.providers.serpapi.common import extract_asin
+from app.providers.serpapi.common import condition_from_title, extract_asin
 from app.schemas.common import DataMeta
 from app.schemas.product import MatchInfo, ProductSearchResult
 from app.schemas.search import SearchRequest, SearchResponse
@@ -55,6 +55,9 @@ def group_listings(
     """Cluster listings into products using the matcher (exact matches join a group)."""
     groups: list[ListingGroup] = []
     for listing in listings:
+        # Providers do not all flag condition; the title is where Indian resellers say
+        # "Refurbished". Normalise it here so every provider's listings group alike.
+        listing.condition = condition_from_title(listing.title, listing.condition or "new")
         cand = Candidate(
             listing.title, catalog.clean_identifiers(listing.identifiers), listing.brand
         )
@@ -63,7 +66,7 @@ def group_listings(
             # A refurbished or used listing is not the same product as a sealed one,
             # however identical the title. It gets its own group, and so its own
             # card and price, instead of becoming a "cheapest offer" for the new one.
-            if (listing.condition or "new") != (group.listings[0][0].condition or "new"):
+            if listing.condition != (group.listings[0][0].condition or "new"):
                 continue
             res = match_products(group.reference, cand)
             if res.match_type == MatchType.EXACT and res.confidence >= min_confidence:
