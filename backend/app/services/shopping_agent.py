@@ -318,6 +318,7 @@ class ShoppingAgent:
         self.db = db
         self.settings = get_settings()
         self.llm = get_llm_provider()
+        self.llm_note: str | None = None
         self.search = SearchService(db)
         self.recommender = RecommendationEngine(db)
         self.trust = TrustService(db)
@@ -471,6 +472,8 @@ class ShoppingAgent:
         answer = await self._compose_answer(
             query, intent, products, trust_payload, price_signal, is_demo
         )
+        if self.llm_note:
+            warnings.append(self.llm_note)
         return AgentResponse(
             query=query,
             intent=intent,
@@ -541,6 +544,10 @@ class ShoppingAgent:
                 ).strip()
             except AIProviderError as exc:
                 logger.warning("Agent answer fell back to template: %s", exc)
+                self.llm_note = (
+                    "AI explanations are temporarily unavailable (the AI provider's quota "
+                    "or service), so this answer is built directly from BuyWise data."
+                )
         return self._template_answer(intent, products, trust, price_signal, is_demo)
 
     @staticmethod
@@ -563,6 +570,43 @@ class ShoppingAgent:
                 f"I couldn't find any listings{asked} right now. Try the exact product name "
                 f"with its model, or paste a link to the product page."
             )
+        # A question about timing or where to buy gets its verdict first; the list
+        # of options is supporting detail, not the answer.
+        if products and intent.kind == "buy_timing":
+            first = products[0]
+            if price_signal:
+                lines.append(
+                    f"{first.product.name}: {price_signal.get('action', '').replace('_', ' ')}. "
+                    f"{price_signal.get('reasoning', '')}"
+                )
+            else:
+                lines.append(
+                    f"{first.product.name}: BuyWise has no price history for this product yet, "
+                    f"so it cannot say whether waiting would help."
+                )
+            price_signal = None  # already stated
+        if products and intent.kind == "where_to_buy":
+            first = products[0]
+            best = next(
+                (
+                    r
+                    for r in (
+                        first.recommendations.recommendations if first.recommendations else []
+                    )
+                    if r.category == "BEST_OVERALL"
+                ),
+                None,
+            )
+            if best:
+                trust_text = (
+                    f"Trust Score {best.trust_score}/100"
+                    if best.trust_score is not None
+                    else "a seller BuyWise has not rated yet"
+                )
+                lines.append(
+                    f"For {first.product.name}, the best place right now is {best.retailer_name} "
+                    f"at ₹{best.price:,.0f} ({trust_text}). {best.reason}"
+                )
         if products:
             lines.append(
                 f"I found {len(products)} option{'s' if len(products) != 1 else ''}"

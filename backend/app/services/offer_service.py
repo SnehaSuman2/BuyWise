@@ -289,7 +289,14 @@ class OfferService:
                 estimated_final_price=best_value.price.estimated_final_price,
                 trust_score=best_value.trust.score,
                 confidence=0.75,
-                reason=f"Best balance of price (₹{best_value.price.estimated_final_price:,.0f}) and trust ({best_value.trust.score if best_value.trust.score is not None else 'n/a'}/100).",
+                reason=(
+                    f"Best balance of price (₹{best_value.price.estimated_final_price:,.0f}) "
+                    + (
+                        f"and trust ({best_value.trust.score}/100)."
+                        if best_value.trust.score is not None
+                        else "and what is known about the seller (not yet rated)."
+                    )
+                ),
             )
         )
         best_overall = max(
@@ -303,9 +310,28 @@ class OfferService:
         )
         diff = best_overall.price.estimated_final_price - cheapest.price.estimated_final_price
         if best_overall.id == cheapest.id:
-            reason = "Cheapest offer and a strong trust score — no trade-off needed."
+            if best_overall.trust.score is None:
+                reason = (
+                    "Cheapest offer. BuyWise has not rated this seller yet, so check the "
+                    "seller before buying."
+                )
+            elif best_overall.trust.score >= 60:
+                reason = "Cheapest offer and a strong trust score — no trade-off needed."
+            else:
+                reason = (
+                    f"Cheapest offer, from a retailer with a trust score of "
+                    f"{best_overall.trust.score}/100."
+                )
         elif diff > 0:
-            reason = f"₹{diff:,.0f} more than the cheapest offer, but from a retailer with a higher trust score ({best_overall.trust.score}/100 vs {cheapest.trust.score if cheapest.trust.score is not None else 'n/a'}/100)."
+            cheapest_trust = (
+                f"{cheapest.trust.score}/100"
+                if cheapest.trust.score is not None
+                else "a seller not yet rated"
+            )
+            reason = (
+                f"₹{diff:,.0f} more than the cheapest offer, but from a retailer with a "
+                f"higher trust score ({best_overall.trust.score}/100 vs {cheapest_trust})."
+            )
         else:
             reason = "Best combination of price, trust and delivery."
         picks.insert(

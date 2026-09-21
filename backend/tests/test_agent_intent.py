@@ -88,3 +88,48 @@ async def test_agent_answers_about_the_generation_asked_for(client, monkeypatch)
     assert all(q == "iphone 17" for q in fake.queries), fake.queries
     # Buy-timing questions carry the price signal, honest about thin history.
     assert body["intent"]["kind"] == "buy_timing" and body["price_signal"] is not None
+
+
+@pytest.mark.asyncio
+async def test_timing_and_where_to_buy_answers_lead_with_the_verdict(client, monkeypatch):
+    items = [
+        _listing("Apple iPhone 17 (256 GB) - Black", "Amazon.in", "amazon.in", 79900),
+        _listing("Apple iPhone 17 256GB Black", "Flipkart", "flipkart.com", 79490),
+        _listing("Apple iPhone 17 256 GB Black", "Croma", "croma.com", 78990),
+    ]
+    monkeypatch.setattr(registry, "product_search_providers", lambda: [FakeSearch(items)])
+    monkeypatch.setattr(registry, "retailer_search_providers", lambda: [NoAmazon()])
+
+    timing = (
+        await client.post("/api/v1/agent", json={"query": "should i buy iphone 17 now or wait"})
+    ).json()
+    assert timing["intent"]["kind"] == "buy_timing"
+    first_line = timing["answer"].split("\n")[0]
+    assert "iPhone 17" in first_line and (
+        "history" in first_line.lower() or "wait" in first_line.lower()
+    ), first_line
+
+    where = (
+        await client.post("/api/v1/agent", json={"query": "best place to buy iphone 17 right now"})
+    ).json()
+    assert where["intent"]["kind"] == "where_to_buy"
+    first_line = where["answer"].split("\n")[0]
+    assert first_line.startswith("For ") and "best place right now is" in first_line, first_line
+    assert "₹" in first_line
+
+
+@pytest.mark.asyncio
+async def test_picks_never_claim_a_strong_trust_score_for_an_unrated_seller(client, monkeypatch):
+    items = [
+        _listing("Apple iPhone 17 256GB Black", "GOT IT", "gotit.in", 79500),
+        _listing("Apple iPhone 17 256GB Black", "Zepto", "zepto.com", 82900),
+        _listing("Apple iPhone 17 256GB Black", "MRV electronics", "mrv.in", 89999),
+    ]
+    monkeypatch.setattr(registry, "product_search_providers", lambda: [FakeSearch(items)])
+    monkeypatch.setattr(registry, "retailer_search_providers", lambda: [NoAmazon()])
+    r = await client.post("/api/v1/search", json={"query": "iphone 17 256gb"})
+    pid = r.json()["results"][0]["id"]
+    offers = (await client.get(f"/api/v1/products/{pid}/offers")).json()
+    reasons = " ".join(p["reason"] for p in offers["picks"])
+    assert "strong trust score" not in reasons and "n/a" not in reasons, reasons
+    assert "not rated" in reasons or "not yet rated" in reasons, reasons

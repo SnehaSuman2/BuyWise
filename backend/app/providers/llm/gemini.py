@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any
 
 from app.core.config import get_settings
@@ -17,6 +18,17 @@ from app.core.http import request_with_retry
 from app.providers.llm.base import AIProviderError, BaseLLMProvider
 
 logger = logging.getLogger(__name__)
+# When Google says the quota is exhausted, every further call fails the same way
+# for a while. Stop calling for ten minutes rather than paying a failed round trip
+# (with retries) on each question; the agent answers from data in the meantime.
+QUOTA_BLOCK_SECONDS = 10 * 60
+_quota_blocked_until = 0.0
+
+
+def quota_blocked() -> bool:
+    return time.time() < _quota_blocked_until
+
+
 STATS = {"calls": 0, "failures": 0, "total_tokens": 0}
 
 API_ROOT = "https://generativelanguage.googleapis.com/v1beta"
@@ -64,6 +76,8 @@ class GeminiProvider(BaseLLMProvider):
         if json_mode:
             body["generationConfig"]["responseMimeType"] = "application/json"
 
+        if quota_blocked():
+            raise AIProviderError("Gemini quota exhausted; not retrying for a few minutes")
         STATS["calls"] += 1
         try:
             resp = await request_with_retry(
@@ -90,6 +104,9 @@ class GeminiProvider(BaseLLMProvider):
                     f"Gemini model '{self.model}' has been retired. {detail} "
                     "Set GEMINI_MODEL to a current model."
                 )
+            if resp.status_code == 429 and "quota" in detail.lower():
+                global _quota_blocked_until
+                _quota_blocked_until = time.time() + QUOTA_BLOCK_SECONDS
             raise AIProviderError(f"Gemini returned HTTP {resp.status_code}: {detail}")
 
         data = resp.json()

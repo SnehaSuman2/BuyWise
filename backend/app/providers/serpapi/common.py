@@ -93,3 +93,22 @@ def rating_of(value) -> float | None:
 
 def reviews_of(value) -> int | None:
     return parse_int(value)
+
+
+_USED_RE = re.compile(
+    r"\b(refurbished|renewed|pre-owned|preowned|second[- ]hand|used|open[- ]box|superb grade|"
+    r"grade [abc]\b|unboxed)\b",
+    re.I,
+)
+
+
+def condition_from_title(title: str | None, default: str = "new") -> str:
+    """ "Refurbished", "Renewed", "Open Box" in a title mean the item is not new.
+
+    Google Shopping only sometimes flags condition in its own fields; the title is
+    where Indian resellers say it. A refurbished phone at a third off is a real
+    offer, but it is not the same offer as a sealed one and must carry its label.
+    """
+    if title and _USED_RE.search(title):
+        return "used"
+    return default

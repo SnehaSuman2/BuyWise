@@ -13,6 +13,7 @@ from app.providers.base import (
 from app.providers.search_client import SearchApiError, get_search_client
 from app.providers.serpapi.common import (
     availability_from_text,
+    condition_from_title,
     delivery_days_from_text,
     rating_of,
     reviews_of,
@@ -57,6 +58,7 @@ def normalize_amazon_result(
         availability=availability_from_text(delivery)
         if delivery
         else ("in_stock" if price else "unknown"),
+        condition=condition_from_title(title),
         rating=rating_of(item.get("rating")),
         rating_count=reviews_of(item.get("reviews")),
         identifiers={"asin": asin},

@@ -176,3 +176,25 @@ def test_implausible_average_rating_is_dropped():
     # A perfect score on a small corpus is plausible and kept.
     small = normalize_review_insights(data, {"reviews": 7, "rating": 5.0}, "B0X", "amazon.in")
     assert small.average_rating == 5.0
+
+
+def test_refurbished_in_title_marks_the_listing_used():
+    from app.providers.serpapi.google_shopping import normalize_shopping_result
+
+    used = normalize_shopping_result(
+        {
+            "title": "Apple iPhone 17 - Refurbished– Superb Grade | 256GB",
+            "price": "₹78,999",
+            "extracted_price": 78999,
+            "source": "Ovantica",
+        }
+    )
+    new = normalize_shopping_result(
+        {
+            "title": "Apple iPhone 17 256GB Black",
+            "price": "₹79,900",
+            "extracted_price": 79900,
+            "source": "Croma",
+        }
+    )
+    assert used.condition == "used" and new.condition == "new"

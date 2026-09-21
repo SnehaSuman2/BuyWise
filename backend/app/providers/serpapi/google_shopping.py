@@ -9,6 +9,7 @@ from app.providers.base import NormalizedListing, ProductSearchProvider, Provide
 from app.providers.search_client import SearchApiError, get_search_client
 from app.providers.serpapi.common import (
     availability_from_text,
+    condition_from_title,
     delivery_days_from_text,
     domain_of,
     extract_asin,
@@ -49,6 +50,7 @@ def normalize_shopping_result(
         or "used" in ext_text.lower()
     ):
         condition = "used"
+    condition = condition_from_title(title, condition)
     return NormalizedListing(
         title=title,
         url=link,
