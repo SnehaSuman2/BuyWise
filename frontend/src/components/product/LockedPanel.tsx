@@ -29,7 +29,7 @@ export default function LockedPanel({
       <div className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-indigo-500/10 text-indigo-500 mb-3"><Lock className="w-5 h-5" /></div>
       <h3 className="font-semibold mb-1 flex items-center justify-center gap-2"><Crown className="w-4 h-4 text-amber-500" /> {count ? `${count} with Pro` : `${what[0].toUpperCase()}${what.slice(1)} is part of Pro`}</h3>
       <p className="text-sm text-muted-foreground max-w-md mx-auto mb-4">
-        Free shows you the lowest price. Pro shows every retailer side by side with true final prices, trust scores and the best overall, cheapest and safest picks. From ₹99 a month, and nothing renews by itself.
+        Pro shows every retailer side by side with true final prices, price history, trust scores and the best overall, cheapest and safest picks. From ₹99 a month, and nothing renews by itself.
       </p>
       <div className="flex flex-wrap items-center justify-center gap-2">
         <Link href="/pricing" className="px-4 py-2 rounded-xl gradient-primary text-white text-sm font-medium">See Pro plans</Link>

@@ -251,6 +251,7 @@ async def upsert_product(
     source_url: str | None = None,
     is_demo: bool = False,
     condition: str = "new",
+    extra_attributes: dict | None = None,
 ) -> Product:
     identifiers = clean_identifiers(identifiers)
     attrs = attrs or extract_attributes(title, specifications, brand)
@@ -320,6 +321,11 @@ async def upsert_product(
             product = await _find_existing()
             if product is None:
                 raise  # conflict was on something else entirely — a real error
+    if extra_attributes:
+        merged = dict(product.attributes or {})
+        merged.update({k: v for k, v in extra_attributes.items() if v not in (None, "", False)})
+        if merged != (product.attributes or {}):
+            product.attributes = merged
     if not created:
         # enrich missing fields without overwriting known data
         if image_url and not product.images:

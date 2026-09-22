@@ -52,6 +52,10 @@ class NormalizedListing(BaseModel):
     source_engine: str | None = None
     observed_at: datetime = Field(default_factory=utcnow)
     is_demo: bool = False
+    # Google Shopping shows one merchant per result but knows when others sell the
+    # same item. The token lets a later call ask it for every store's price.
+    multiple_sources: bool = False
+    enrichment_token: str | None = None
 
 
 class ReviewTheme(BaseModel):

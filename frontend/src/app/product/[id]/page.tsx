@@ -1,11 +1,12 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Star, TrendingDown, TrendingUp, Minus, Shield, ThumbsUp, ThumbsDown, MessagesSquare } from "lucide-react";
+import { Star, TrendingDown, TrendingUp, Minus, Shield, ThumbsUp, ThumbsDown, MessagesSquare, Lock } from "lucide-react";
 import { serverGet } from "@/lib/api";
 import { formatPrice, getPriceActionColor, priceActionLabel } from "@/lib/utils";
 import DataBadge from "@/components/ui/DataBadge";
 import ComparisonSections from "@/components/product/ComparisonSections";
+import LockedPanel from "@/components/product/LockedPanel";
 import PriceHistoryChart from "@/components/product/PriceHistoryChart";
 import ProductActions from "@/components/product/ProductActions";
 import TrustScoreCard from "@/components/trust/TrustScoreCard";
@@ -68,8 +69,17 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
             <span>{product.exact_offer_count} exact-match offer{product.exact_offer_count === 1 ? "" : "s"}{product.offer_count > product.exact_offer_count ? ` · ${product.offer_count - product.exact_offer_count} variant/similar` : ""}</span>
             {(product.gtin || product.mpn || product.asin) && <span className="text-xs">ID: {product.gtin || product.mpn || product.asin}</span>}
           </div>
-          <div className="text-4xl font-bold mb-1 tabular-nums">{lowest ? formatPrice(lowest) : "No price yet"}</div>
-          <p className="text-muted-foreground text-sm mb-5">Lowest estimated final price across exact matches{product.highest_price && lowest && product.highest_price > lowest ? ` · up to ${formatPrice(product.highest_price)} elsewhere` : ""}</p>
+          {product.locked ? (
+            <div className="mb-5">
+              <div className="text-2xl font-bold mb-1 flex items-center gap-2"><Lock className="w-5 h-5 text-indigo-500" /> Prices with Pro</div>
+              <p className="text-muted-foreground text-sm">Lowest price, every retailer&apos;s offer and price history are part of BuyWise Pro. <Link href="/pricing" className="text-indigo-500 hover:underline">See plans</Link></p>
+            </div>
+          ) : (
+            <>
+              <div className="text-4xl font-bold mb-1 tabular-nums">{lowest ? formatPrice(lowest) : "No price yet"}</div>
+              <p className="text-muted-foreground text-sm mb-5">Lowest estimated final price across exact matches{product.highest_price && lowest && product.highest_price > lowest ? ` · up to ${formatPrice(product.highest_price)} elsewhere` : ""}</p>
+            </>
+          )}
 
           {signal && (
             <div className={`glass rounded-xl p-4 border-l-4 mb-4 ${signal.action === "BUY_NOW" ? "border-emerald-500" : signal.action === "WAIT" ? "border-amber-500" : "border-muted-foreground"}`}>
@@ -95,7 +105,9 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
 
       <section id="history" className="mb-16">
         <div className="flex flex-wrap items-center gap-3 mb-6"><h2 className="text-2xl font-bold flex items-center gap-2"><TrendingDown className="w-6 h-6 text-purple-500" /> Price history</h2>{history && <DataBadge meta={history.meta} />}</div>
-        {history?.stats && history.stats.observations >= 2 ? (
+        {history?.locked ? (
+          <LockedPanel what="price history" />
+        ) : history?.stats && history.stats.observations >= 2 ? (
           <>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
               {[

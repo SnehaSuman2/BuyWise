@@ -49,6 +49,7 @@ class Entitlements:
     saved_products: int
     history_days: int
     compare_offers: bool  # the retailer-by-retailer comparison and the picks
+    see_prices: bool = True  # prices, price history and offer counts anywhere
 
     def as_limits(self) -> dict:
         return {
@@ -58,14 +59,19 @@ class Entitlements:
         }
 
     def as_features(self) -> dict:
-        return {"compare_offers": self.compare_offers}
+        return {"compare_offers": self.compare_offers, "see_prices": self.see_prices}
 
 
 def tier(plan_id: str) -> Entitlements:
     s = get_settings()
     tiers = {
         "free": Entitlements(
-            "free", s.FREE_MAX_ALERTS, s.FREE_MAX_SAVED_PRODUCTS, s.FREE_HISTORY_DAYS, False
+            "free",
+            s.FREE_MAX_ALERTS,
+            s.FREE_MAX_SAVED_PRODUCTS,
+            s.FREE_HISTORY_DAYS,
+            False,
+            see_prices=not s.PAYWALL_PRICES,
         ),
         "pro_monthly": Entitlements(
             "pro_monthly",
@@ -141,20 +147,24 @@ def plans() -> list[PlanInfo]:
     best = max(paid, key=lambda plan: saving(plan[2], plan[3]))[0]
 
     free = tier("free")
+    free_features = ["Search by name, link or photo", "Trust Scores and buyer reviews"]
+    if free.see_prices:
+        free_features += [
+            "Lowest price for every product",
+            f"{free.history_days}-day price history",
+        ]
+    free_features += [
+        f"{free.alerts} price alert by email",
+        f"Up to {free.saved_products} saved products",
+        "AI shopping agent" + (" (lowest price only)" if free.see_prices else " (products only)"),
+    ]
     return [
         PlanInfo(
             id="free",
             name="Free",
             price_inr=0,
             period_days=0,
-            features=[
-                "Search by name, link or photo",
-                "Lowest price for every product",
-                f"{free.alerts} price alert",
-                f"Up to {free.saved_products} saved products",
-                f"{free.history_days}-day price history",
-                "AI shopping agent (lowest price only)",
-            ],
+            features=free_features,
         ),
         *[
             PlanInfo(

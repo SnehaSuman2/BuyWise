@@ -50,4 +50,5 @@ class PriceHistoryResponse(BaseModel):
     stats: PriceStatsResponse | None = None
     signal: PriceSignalResponse
     message: str | None = None
+    locked: bool = False  # history withheld: part of Pro
     meta: DataMeta

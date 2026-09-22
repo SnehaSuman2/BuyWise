@@ -28,6 +28,9 @@ export interface ProductSearchResult {
   average_rating?: number | null;
   match?: MatchInfo | null;
   is_demo: boolean;
+  /** Prices, retailers and counts withheld by the server: part of Pro. */
+  locked?: boolean;
+  hint?: string | null;
 }
 
 export interface SearchResponse {
@@ -74,6 +77,7 @@ export interface ProductDetail {
   average_rating?: number | null;
   rating_count?: number | null;
   meta?: DataMeta | null;
+  locked?: boolean;
 }
 
 export interface Retailer {
@@ -216,6 +220,7 @@ export interface PriceHistoryData {
   signal: PriceSignal;
   message?: string | null;
   meta: DataMeta;
+  locked?: boolean;
 }
 
 export interface EvidenceExample {

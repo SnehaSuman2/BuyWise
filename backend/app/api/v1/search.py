@@ -16,7 +16,7 @@ settings = get_settings()
 
 async def _run(request: SearchRequest, db: AsyncSession, user) -> SearchResponse:
     try:
-        return await SearchService(db).search(request, user.id if user else None)
+        return await SearchService(db).search(request, user.id if user else None, user=user)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

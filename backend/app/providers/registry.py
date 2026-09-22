@@ -6,6 +6,8 @@ the fallback and always label their output is_demo=True.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from app.core.config import get_settings
 from app.providers.base import (
     ImageSearchProvider,
@@ -34,6 +36,9 @@ from app.providers.serpapi.google_shopping import GoogleShoppingProvider
 from app.providers.trust.google_search_evidence import GoogleSearchEvidenceProvider
 from app.providers.trust.trustpilot import TrustpilotProvider
 
+if TYPE_CHECKING:  # pragma: no cover
+    from app.providers.serpapi.google_immersive_product import GoogleOffersEnricher
+
 
 def product_search_providers() -> list[ProductSearchProvider]:
     """Ordered by priority. Text search uses the first; others are fallbacks."""
@@ -54,6 +59,14 @@ def amazon_product_provider() -> ProductDetailsProvider:
 def google_product_provider() -> ProductDetailsProvider | None:
     p = GoogleProductProvider()
     return p if p.enabled else None
+
+
+def offers_enricher() -> "GoogleOffersEnricher | None":
+    """Every store's price for a Google Shopping product, when a vendor is configured."""
+    from app.providers.serpapi.google_immersive_product import GoogleOffersEnricher
+
+    e = GoogleOffersEnricher()
+    return e if e.enabled else None
 
 
 def image_search_providers() -> list[ImageSearchProvider]:

@@ -78,6 +78,13 @@ class OfferService:
                 f"Excluded {excluded_count} offer(s) from outside India "
                 f"({', '.join(excluded_names[:4])})."
             )
+        # Every store's price from Google for this exact product, when the search
+        # result carried the handle for it. This is what turns one offer into a
+        # comparison.
+        google_offers, providers_g, warnings_g = await self.google_offers(product)
+        listings.extend(google_offers)
+        providers_used += providers_g
+        warnings += warnings_g
         cache = catalog.PersistCache()
         variant = await catalog.primary_variant(self.db, product, cache=cache)
         stored = 0
@@ -99,10 +106,50 @@ class OfferService:
                 )
                 stored += 1
         await catalog.flush_pending(self.db, cache)
+        attrs = dict(product.attributes or {})
+        attrs["enriched_at"] = datetime.now(timezone.utc).isoformat()
+        product.attributes = attrs
         return {"providers": providers_used, "warnings": warnings, "stored": stored}
 
+    async def google_offers(self, product: Product) -> tuple[list, list[str], list[str]]:
+        """Listings from every store Google knows for this product, or none."""
+        enricher = registry.offers_enricher()
+        attrs = product.attributes or {}
+        token = attrs.get("enrichment_token")
+        product_id = attrs.get("google_product_id")
+        if enricher is None or not (token or product_id):
+            return [], [], []
+        res = await enricher.offers_for(token=token, product_id=product_id)
+        providers = [f"{enricher.name}:{res.engine or enricher.engine}"]
+        if not res.ok:
+            return [], providers, [f"Store prices from Google unavailable ({res.error})."]
+        return list(res.items), providers, []
+
+    async def enrich_if_thin(self, product: Product) -> bool:
+        """First sight of a product that Google says several stores sell: fetch them.
+
+        Returns True when a refresh ran.
+        """
+        offers = await catalog.load_offers(self.db, product.id)
+        attrs = product.attributes or {}
+        if len(offers) >= 2 or attrs.get("enriched_at"):
+            return False
+        if not (attrs.get("enrichment_token") or attrs.get("google_product_id")):
+            return False
+        try:
+            await self.refresh_offers(product)
+        except Exception as exc:  # never let enrichment break a page
+            logger.warning("Enrichment failed for %s: %s", product.id, type(exc).__name__)
+            return False
+        return True
+
     async def compare(
-        self, product_id: uuid.UUID, *, refresh: bool = False, full: bool = True
+        self,
+        product_id: uuid.UUID,
+        *,
+        refresh: bool = False,
+        full: bool = True,
+        prices: bool = True,
     ) -> OfferComparison | None:
         """The comparison for a product.
 
@@ -124,7 +171,14 @@ class OfferService:
         # One offer is not a comparison. A product that arrived with a single offer
         # (a photo match, a pasted link) is refreshed sooner so the page can compare,
         # still no more than once per OFFER_THIN_REFRESH_SECONDS.
-        is_thin = len(offers) < 2 and (age is None or age > thin_after)
+        attrs = product.attributes or {}
+        # A thin product Google flagged as sold by several stores is enriched on its
+        # first view; other thin products wait for the interval so a page view cannot
+        # spend vendor calls on something with nothing more to find.
+        can_enrich_now = not attrs.get("enriched_at") and bool(
+            attrs.get("enrichment_token") or attrs.get("google_product_id")
+        )
+        is_thin = len(offers) < 2 and (age is None or age > thin_after or can_enrich_now)
         if refresh or ((is_stale or is_thin) and not (self.settings.demo_mode and offers)):
             try:
                 meta = await self.refresh_offers(product)
@@ -161,7 +215,12 @@ class OfferService:
         is_demo = bool(offers) and all(o.is_demo for o in offers)
         lowest = min((r.price.estimated_final_price for r in exact), default=None)
         locked, hidden_offers, hidden_retailers = False, 0, 0
-        if not full and responses:
+        if not prices and responses:
+            # Nothing priced leaves the server: not even the cheapest offer.
+            hidden_offers = len(responses)
+            hidden_retailers = len({r.retailer.id for r in responses})
+            responses, picks, locked, lowest = [], [], True, None
+        elif not full and responses:
             cheapest = min(exact or responses, key=lambda r: r.price.estimated_final_price)
             hidden_offers = len(responses) - 1
             hidden_retailers = len({r.retailer.id for r in responses} - {cheapest.retailer.id})

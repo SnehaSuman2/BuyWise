@@ -26,9 +26,9 @@ class FakeResponse:
 
 
 def test_spelling_of_a_query_does_not_change_its_cache_key():
-    key = lambda q: cache.make_key(
-        "search", "google_shopping", sc._cache_params({"q": q, "gl": "in"})
-    )  # noqa: E731
+    def key(q):
+        return cache.make_key("search", "google_shopping", sc._cache_params({"q": q, "gl": "in"}))  # noqa: E731
+
     assert key("iPhone 17") == key("iphone 17") == key("iphone  17") == key("iPhone 17!")
     # Genuinely different queries stay different.
     assert key("iphone 17") != key("iphone 17 pro")

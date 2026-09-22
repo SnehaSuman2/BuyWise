@@ -8,6 +8,7 @@ Routing (minimum API calls):
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 import re
@@ -243,7 +244,7 @@ class SearchService:
 
     # ------------------------------------------------------------ public
     async def search(
-        self, request: SearchRequest, user_id: uuid.UUID | None = None
+        self, request: SearchRequest, user_id: uuid.UUID | None = None, user=None
     ) -> SearchResponse:
         started = time.perf_counter()
         warnings: list[str] = []
@@ -389,6 +390,7 @@ class SearchService:
             if ref:
                 results.insert(0, await self._result_for_product(ref, None))
 
+        results = await self._enrich_top(results)
         results, hidden_non_products = hide_non_product_cards(results, accessory_query)
         if hidden_non_products:
             warnings.append(
@@ -401,6 +403,10 @@ class SearchService:
                 f"of the same model (likely spam or mismatched listings)."
             )
         results = self._sort(results, request.sort_by)
+        from app.services.subscription_service import entitlements_for
+
+        if not (await entitlements_for(self.db, user)).see_prices:
+            results = self.withhold_prices(results)
         total = len(results)
         start = (request.page - 1) * request.page_size
         page_results = results[start : start + request.page_size]
@@ -455,11 +461,25 @@ class SearchService:
         providers_used, warnings, listings, cached = [], [], [], False
         failures: list[str] = []
         stale = False
-        for provider in registry.product_search_providers():
-            res = await provider.search_products(
-                query, max_results=40, min_price=min_price, max_price=max_price
-            )
+        # Google Shopping and Amazon, together, every time. Amazon used to be asked
+        # only when Google returned almost nothing, so most products arrived with a
+        # single offer. Its listings carry clean titles and ASINs, which is what
+        # lets the same product from two stores recognise itself.
+        shopping = [
+            (p, p.search_products(query, max_results=40, min_price=min_price, max_price=max_price))
+            for p in registry.product_search_providers()
+        ]
+        amazon = [
+            (p, p.search_retailer(query, max_results=10))
+            for p in registry.retailer_search_providers()
+        ]
+        results = await asyncio.gather(*[c for _, c in shopping + amazon], return_exceptions=True)
+        for (provider, _), res in zip(shopping + amazon, results, strict=True):
             providers_used.append(f"{provider.name}:{provider.engine}")
+            if isinstance(res, BaseException):
+                warnings.append(f"{provider.engine} temporarily unavailable.")
+                failures.append(f"{provider.engine}: {type(res).__name__}")
+                continue
             cached = cached or res.cached
             stale = stale or res.stale
             if not res.ok:
@@ -467,19 +487,6 @@ class SearchService:
                 failures.append(res.error or provider.engine)
                 continue
             listings.extend(res.items)
-            if len(listings) >= 5:
-                break
-        if len(listings) < 3:
-            for provider in registry.retailer_search_providers():
-                res = await provider.search_retailer(query, max_results=10)
-                providers_used.append(f"{provider.name}:{provider.engine}")
-                cached = cached or res.cached
-                stale = stale or res.stale
-                if res.ok:
-                    listings.extend(res.items)
-                else:
-                    warnings.append("Amazon data temporarily unavailable.")
-                    failures.append(res.error or "amazon")
         priced = [l for l in listings if l.price]
         # Price bounds are applied here for every vendor; only SerpApi's Google
         # Shopping engine can filter server-side, and even then not exactly.
@@ -618,6 +625,68 @@ class SearchService:
             g.reference_match = None
         return kept, hidden
 
+    async def _enrich_top(self, results: list[ProductSearchResult]) -> list[ProductSearchResult]:
+        """Ask Google for every store's price on the first few products it flagged as
+        sold by several stores and that arrived with one offer. Bounded by
+        SEARCH_ENRICH_LIMIT, one vendor call each, run together."""
+        from app.services.offer_service import OfferService
+
+        limit = self.settings.SEARCH_ENRICH_LIMIT
+        if limit <= 0 or registry.offers_enricher() is None:
+            return results
+        candidates = []
+        for r in results:
+            if len(candidates) >= limit:
+                break
+            if r.offer_count <= 1:
+                product = await catalog.load_product(self.db, r.id)
+                attrs = (product.attributes if product else None) or {}
+                if product and attrs.get("multiple_sources") and not attrs.get("enriched_at"):
+                    candidates.append((r, product))
+        if not candidates:
+            return results
+        service = OfferService(self.db)
+        outcomes = await asyncio.gather(
+            *[service.enrich_if_thin(p) for _, p in candidates], return_exceptions=True
+        )
+        refreshed = {r.id for (r, _), ok in zip(candidates, outcomes, strict=True) if ok is True}
+        if not refreshed:
+            return results
+        rebuilt = []
+        for r in results:
+            if r.id in refreshed:
+                product = await catalog.load_product(self.db, r.id)
+                rebuilt.append(await self._result_for_product(product, None) if product else r)
+                if rebuilt[-1] is not r:
+                    rebuilt[-1].match = r.match
+            else:
+                rebuilt.append(r)
+        return rebuilt
+
+    @staticmethod
+    def withhold_prices(results: list[ProductSearchResult]) -> list[ProductSearchResult]:
+        """Strip everything priced from result cards for viewers without Pro."""
+        out = []
+        for r in results:
+            hint = (
+                f"Prices at {len(r.retailers)} stores"
+                if len(r.retailers) > 1
+                else "Price available"
+            )
+            out.append(
+                r.model_copy(
+                    update={
+                        "lowest_price": None,
+                        "highest_price": None,
+                        "offer_count": 0,
+                        "retailers": [],
+                        "locked": True,
+                        "hint": hint + " with Pro",
+                    }
+                )
+            )
+        return out
+
     async def _catalog_fallback(self, query_text: str) -> list[ProductSearchResult]:
         from sqlalchemy import select
 
@@ -740,6 +809,14 @@ class SearchService:
                     source_url=ref_listing.url,
                     is_demo=all(l.is_demo for l, _ in group.listings),
                     condition=ref_listing.condition or "new",
+                    extra_attributes={
+                        "multiple_sources": any(l.multiple_sources for l, _ in group.listings),
+                        "enrichment_token": next(
+                            (l.enrichment_token for l, _ in group.listings if l.enrichment_token),
+                            None,
+                        ),
+                        "google_product_id": identifiers.get("google_product_id"),
+                    },
                 )
             group.product = product
             planned.append((group, product, attached))

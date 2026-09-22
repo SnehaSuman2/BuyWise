@@ -61,6 +61,7 @@ class ProductDetail(ProductResponse):
     exact_offer_count: int = 0
     average_rating: float | None = None
     rating_count: int | None = None
+    locked: bool = False  # prices withheld: part of Pro
     meta: DataMeta | None = None
 
 
@@ -77,3 +78,7 @@ class ProductSearchResult(BaseModel):
     average_rating: float | None = None
     match: MatchInfo | None = None  # for URL/image searches: how well this matches the reference
     is_demo: bool = False
+    # Prices, retailers and counts are part of Pro. When withheld, the server says
+    # so and offers a hint the page may show ("Sold by several stores").
+    locked: bool = False
+    hint: str | None = None

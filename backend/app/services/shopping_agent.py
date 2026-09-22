@@ -406,7 +406,9 @@ class ShoppingAgent:
         intent = await self.extract_intent(query)
         # The picks are the comparison distilled, and the comparison is part of
         # Pro. Without it the agent still finds the product and its lowest price.
-        full = (await entitlements_for(self.db, user)).compare_offers
+        ent = await entitlements_for(self.db, user)
+        full = ent.compare_offers
+        see_prices = ent.see_prices
         products: list[AgentProductResult] = []
         trust_payload = None
         price_signal = None
@@ -474,7 +476,27 @@ class ShoppingAgent:
             for item in top:
                 rec = await self.recommender.generate(item.id, with_ai=False, full=full)
                 products.append(AgentProductResult(product=item, recommendations=rec))
-            if top and not full:
+            if top and not see_prices:
+                products = [
+                    AgentProductResult(
+                        product=pr.product.model_copy(
+                            update={
+                                "lowest_price": None,
+                                "highest_price": None,
+                                "offer_count": 0,
+                                "retailers": [],
+                                "locked": True,
+                            }
+                        ),
+                        recommendations=pr.recommendations,
+                    )
+                    for pr in products
+                ]
+                warnings.append(
+                    "Prices, price history and the retailer comparison are part of "
+                    "BuyWise Pro; showing matching products only."
+                )
+            elif top and not full:
                 warnings.append(
                     "Retailer-by-retailer comparison and picks are part of BuyWise Pro; "
                     "showing the lowest price only."

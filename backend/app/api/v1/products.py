@@ -10,7 +10,7 @@ from app.core.database import get_db
 from app.core.security import get_optional_user
 from app.schemas.common import DataMeta
 from app.schemas.offer import OfferComparison
-from app.schemas.price import PriceHistoryResponse
+from app.schemas.price import PriceHistoryResponse, PriceSignalResponse
 from app.schemas.product import ProductDetail, ProductVariantResponse
 from app.schemas.recommendation import RecommendationSet
 from app.schemas.review import ReviewAnalysisResponse
@@ -28,7 +28,10 @@ settings = get_settings()
 
 
 @router.get("/{product_id}", response_model=ProductDetail)
-async def get_product(product_id: UUID, db: AsyncSession = Depends(get_db)):
+async def get_product(
+    product_id: UUID, db: AsyncSession = Depends(get_db), user=Depends(get_optional_user)
+):
+    see_prices = (await entitlements_for(db, user)).see_prices
     product = await catalog.load_product(db, product_id)
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
@@ -55,10 +58,11 @@ async def get_product(product_id: UUID, db: AsyncSession = Depends(get_db)):
         is_demo=is_demo,
         created_at=product.created_at,
         variants=[ProductVariantResponse.model_validate(v) for v in product.variants],
-        lowest_price=min(prices) if prices else None,
-        highest_price=max(prices) if prices else None,
-        offer_count=len(offers),
-        exact_offer_count=len(exact),
+        lowest_price=min(prices) if prices and see_prices else None,
+        highest_price=max(prices) if prices and see_prices else None,
+        offer_count=len(offers) if see_prices else 0,
+        exact_offer_count=len(exact) if see_prices else 0,
+        locked=not see_prices,
         average_rating=round(sum(r * n for r, n in ratings) / sum(n for _, n in ratings), 1)
         if ratings
         else None,
@@ -82,7 +86,9 @@ async def get_product_offers(
     if refresh and not (user and (user.plan == "pro" or user.role == "admin")):
         refresh = False
     ent = await entitlements_for(db, user)
-    result = await OfferService(db).compare(product_id, refresh=refresh, full=ent.compare_offers)
+    result = await OfferService(db).compare(
+        product_id, refresh=refresh, full=ent.compare_offers, prices=ent.see_prices
+    )
     if result is None:
         raise HTTPException(status_code=404, detail="Product not found")
     return result
@@ -98,7 +104,30 @@ async def get_price_history(
     db: AsyncSession = Depends(get_db),
     user=Depends(get_optional_user),
 ):
-    max_days = (await entitlements_for(db, user)).history_days
+    ent = await entitlements_for(db, user)
+    if not ent.see_prices:
+        product = await catalog.load_product(db, product_id)
+        if product is None:
+            raise HTTPException(status_code=404, detail="Product not found")
+        return PriceHistoryResponse(
+            product_id=product.id,
+            product_name=product.name,
+            days_requested=days,
+            days_available=0,
+            history=[],
+            stats=None,
+            signal=PriceSignalResponse(
+                action="INSUFFICIENT_DATA",
+                status="unknown",
+                confidence=0.0,
+                confidence_level="low",
+                reasoning="Price history is part of BuyWise Pro.",
+            ),
+            message="Price history is part of BuyWise Pro.",
+            locked=True,
+            meta=DataMeta(data_mode="live", is_demo=False, providers=[]),
+        )
+    max_days = ent.history_days
     result = await PriceHistoryService(db).get_history(
         product_id, days, max_days=max(max_days, 90 if settings.demo_mode else max_days)
     )

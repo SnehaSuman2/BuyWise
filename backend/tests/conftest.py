@@ -15,6 +15,9 @@ os.environ.update(
         "RAZORPAY_WEBHOOK_SECRET": "test_webhook_secret",
         "ADMIN_EMAILS": "admin@buywisetest.com",
         "LOG_LEVEL": "WARNING",
+        # Most tests are about data quality and expect to see prices; the paywall
+        # has its own tests that switch it on.
+        "PAYWALL_PRICES": "false",
     }
 )
 

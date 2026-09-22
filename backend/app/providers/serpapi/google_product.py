@@ -14,7 +14,7 @@ from app.providers.base import (
     ProviderResult,
     parse_price,
 )
-from app.providers.serpapi.client import SerpApiError, get_serpapi_client
+from app.providers.search_client import SearchApiError, get_search_client
 from app.providers.serpapi.common import (
     availability_from_text,
     delivery_days_from_text,
@@ -66,14 +66,17 @@ def normalize_seller(item: dict, product_id: str) -> NormalizedListing | None:
         rating=rating_of(item.get("rating")),
         rating_count=reviews_of(item.get("reviews")),
         identifiers=identifiers,
-        source_provider="serpapi",
+        source_provider=get_search_client().provider,
         source_engine="google_product",
     )
 
 
 class GoogleProductProvider(ProductDetailsProvider):
-    name = "serpapi"
     engine = "google_product"
+
+    @property
+    def name(self) -> str:
+        return get_search_client().provider
 
     @property
     def enabled(self) -> bool:
@@ -84,18 +87,22 @@ class GoogleProductProvider(ProductDetailsProvider):
         self, identifier: str
     ) -> ProviderResult[NormalizedProductDetails]:
         settings = get_settings()
-        client = get_serpapi_client()
+        client = get_search_client()
         params = {
             "product_id": identifier,
             "gl": settings.SERPAPI_COUNTRY,
             "hl": settings.SERPAPI_LANGUAGE,
-            "offers": "1",
         }
+        # SerpApi's engine wants offers=1 to include sellers; SearchApi has a
+        # dedicated offers engine keyed the same way.
+        engine = self.engine
+        if client.provider == "serpapi":
+            params["offers"] = "1"
+        else:
+            engine = "google_product_offers"
         try:
-            data = await client.search(
-                self.engine, params, cache_ttl=settings.CACHE_TTL_OFFERS_SECONDS
-            )
-        except SerpApiError as exc:
+            data = await client.search(engine, params, cache_ttl=settings.CACHE_TTL_OFFERS_SECONDS)
+        except SearchApiError as exc:
             return ProviderResult.failure(self.name, self.engine, str(exc))
         product = data.get("product_results") or {}
         sellers = data.get("sellers_results") or {}
@@ -119,7 +126,7 @@ class GoogleProductProvider(ProductDetailsProvider):
             specifications=specs,
             identifiers={"google_product_id": identifier},
             offers=offers,
-            source_provider="serpapi",
+            source_provider=client.provider,
             source_engine=self.engine,
         )
         return ProviderResult(

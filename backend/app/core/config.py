@@ -83,6 +83,12 @@ class Settings(BaseSettings):
     OFFER_REFRESH_SECONDS: int = 6 * 60 * 60
     # A product with fewer than two offers is refreshed sooner: one offer is not a comparison.
     OFFER_THIN_REFRESH_SECONDS: int = 30 * 60
+    # After a fresh search, ask Google for every store's price on up to this many of
+    # the results it flagged as sold by several stores. One vendor call each, cached.
+    SEARCH_ENRICH_LIMIT: int = 6
+    # Whether visitors without Pro see prices at all. False shows prices to everyone
+    # and gates only the retailer-by-retailer comparison.
+    PAYWALL_PRICES: bool = True
 
     # --- Security ---
     SECRET_KEY: str = ""

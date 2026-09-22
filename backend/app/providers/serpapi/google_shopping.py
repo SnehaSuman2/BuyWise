@@ -77,6 +77,8 @@ def normalize_shopping_result(
         identifiers=identifiers,
         source_provider=provider,
         source_engine=engine,
+        multiple_sources=bool(item.get("multiple_sources")),
+        enrichment_token=item.get("immersive_product_page_token"),
     )
 
 

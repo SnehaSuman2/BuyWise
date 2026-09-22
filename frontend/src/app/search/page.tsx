@@ -3,7 +3,7 @@
 import { useSearchParams, useRouter } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Star, Search, Link2, AlertTriangle, Camera, X } from "lucide-react";
+import { Star, Search, Link2, AlertTriangle, Camera, X, Lock } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { formatPrice, matchBadgeClass } from "@/lib/utils";
 import DataBadge from "@/components/ui/DataBadge";
@@ -18,7 +18,7 @@ function ProductCard({ product, visual = false }: { product: ProductSearchResult
     <Link href={`/product/${product.id}`} className="glass rounded-2xl overflow-hidden hover:shadow-xl hover:-translate-y-1 transition-all duration-300 group flex flex-col">
       <div className="aspect-square bg-muted/30 relative overflow-hidden">
                 <img src={product.image || "https://placehold.co/400x400/1a1a2e/e0e0e0?text=No+image"} alt={product.name} loading="lazy" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
-        {product.offer_count > 0 && <div className="absolute top-3 right-3 px-2 py-1 rounded-lg bg-indigo-500 text-white text-xs font-medium">{product.offer_count} offer{product.offer_count === 1 ? "" : "s"}</div>}
+        {!product.locked && product.offer_count > 0 && <div className="absolute top-3 right-3 px-2 py-1 rounded-lg bg-indigo-500 text-white text-xs font-medium">{product.offer_count} offer{product.offer_count === 1 ? "" : "s"}</div>}
         {product.is_demo && <div className="absolute top-3 left-3 px-2 py-0.5 rounded-md bg-amber-500 text-white text-[10px] font-bold uppercase">Demo</div>}
       </div>
       <div className="p-4 flex flex-col flex-1">
@@ -27,12 +27,18 @@ function ProductCard({ product, visual = false }: { product: ProductSearchResult
         {product.match && <span className={`self-start mb-2 px-2 py-0.5 rounded-md border text-[11px] font-medium ${matchBadgeClass(product.match.match_type)}`}>{visual ? "Visual match" : product.match.label} · {Math.round(product.match.confidence * 100)}%</span>}
         <div className="flex items-end justify-between mt-auto">
           <div>
-            <div className="text-lg font-bold">{product.lowest_price ? formatPrice(product.lowest_price) : "No price"}</div>
-            {product.highest_price && product.lowest_price && product.highest_price > product.lowest_price && <div className="text-xs text-muted-foreground">up to {formatPrice(product.highest_price)}</div>}
+            {product.locked ? (
+              <div className="inline-flex items-center gap-1.5 text-sm font-medium text-indigo-500"><Lock className="w-3.5 h-3.5" /> {product.hint || "Price with Pro"}</div>
+            ) : (
+              <>
+                <div className="text-lg font-bold">{product.lowest_price ? formatPrice(product.lowest_price) : "No price"}</div>
+                {product.highest_price && product.lowest_price && product.highest_price > product.lowest_price && <div className="text-xs text-muted-foreground">up to {formatPrice(product.highest_price)}</div>}
+              </>
+            )}
           </div>
           {product.average_rating ? <div className="flex items-center gap-1 text-sm text-amber-500"><Star className="w-4 h-4 fill-current" />{product.average_rating}</div> : null}
         </div>
-        {product.retailers.length > 0 && <div className="text-[11px] text-muted-foreground mt-2 truncate">{product.retailers.join(", ")}</div>}
+        {!product.locked && product.retailers.length > 0 && <div className="text-[11px] text-muted-foreground mt-2 truncate">{product.retailers.join(", ")}</div>}
       </div>
     </Link>
   );
