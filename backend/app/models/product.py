@@ -28,6 +28,9 @@ class Product(Base, UUIDMixin, TimestampMixin):
     specifications: Mapped[dict | None] = mapped_column(JSONType, default=dict)
     images: Mapped[list | None] = mapped_column(JSONType, default=list)
     normalized_name: Mapped[str | None] = mapped_column(String(500), index=True)
+    # The product line as the normaliser names it ("iphone17"): what joins a
+    # listing to its curated model and its family page.
+    line: Mapped[str | None] = mapped_column(String(60), index=True)
     # Deterministic key used to avoid duplicate products (brand+model+variant attrs).
     canonical_key: Mapped[str | None] = mapped_column(String(300), unique=True, index=True)
     # Provenance

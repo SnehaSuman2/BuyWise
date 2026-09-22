@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { ExternalLink, ShieldCheck, Store, Layers, ArrowUpRight, Lock } from "lucide-react";
+import { ExternalLink, ShieldCheck, Store, Layers, ArrowUpRight, Lock, BadgeCheck } from "lucide-react";
+import { specSummary } from "@/lib/specs";
 import { formatPrice, getTrustColor, formatRelativeTime } from "@/lib/utils";
 import LockedPanel from "@/components/product/LockedPanel";
 import type { ProductFamily, FamilyVariant } from "@/lib/types";
@@ -44,6 +45,12 @@ export default function FamilyPanel({ family, compact = false }: { family: Produ
         <div className="flex-1 min-w-0">
           <div className="text-xs text-indigo-500 font-medium mb-1 flex items-center gap-1"><Layers className="w-3.5 h-3.5" /> Every store, one place{family.brand ? ` · ${family.brand}` : ""}</div>
           <h2 className="text-2xl font-bold leading-tight">{family.label}</h2>
+          {family.curated && family.specs && (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-sm">
+              {specSummary(family.specs).map((part) => <span key={part} className="text-foreground/80">{part}</span>)}
+              <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground" title={family.specs_note || undefined}><BadgeCheck className="w-3.5 h-3.5 text-indigo-500" /> Curated specs</span>
+            </div>
+          )}
           <p className="text-sm text-muted-foreground mt-1">
             {family.locked
               ? family.hint
@@ -62,7 +69,7 @@ export default function FamilyPanel({ family, compact = false }: { family: Produ
             const active = v.storage === variant.storage;
             return (
               <button key={v.label} type="button" onClick={() => { setStorage(v.storage); setColor(null); }} className={`px-3 py-2 rounded-xl text-sm border transition-colors text-left ${active ? "border-indigo-500 bg-indigo-500/10 text-indigo-500" : "border-border/40 hover:bg-muted/50"}`} aria-pressed={active}>
-                <div className="font-semibold">{v.label}</div>
+                <div className="font-semibold">{v.label}{v.official === false && v.storage ? <span className="ml-1 text-[10px] font-normal text-muted-foreground" title="A size seen in listings that the maker's catalogue does not list">(listed)</span> : null}</div>
                 <div className="text-[11px] text-muted-foreground">
                   {family.locked ? `${v.retailer_count} store${v.retailer_count === 1 ? "" : "s"}` : v.lowest_price ? `from ${formatPrice(v.lowest_price)}` : "no price yet"}
                 </div>
@@ -149,7 +156,7 @@ export default function FamilyPanel({ family, compact = false }: { family: Produ
               })}
             </tbody>
           </table>
-          <p className="px-2 pt-3 text-xs text-muted-foreground">Sorted by estimated final price; refurbished and used items follow new ones. &ldquo;Above other stores&rdquo; compares a price only with the other stores listed here for the same size. Prices differ by colour and pincode and can change at checkout.</p>
+          <p className="px-2 pt-3 text-xs text-muted-foreground">{family.specs_note ? `${family.specs_note} ` : ""}Sorted by estimated final price; refurbished and used items follow new ones. &ldquo;Above other stores&rdquo; compares a price only with the other stores listed here for the same size. Prices differ by colour and pincode and can change at checkout.</p>
         </div>
       )}
     </section>

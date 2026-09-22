@@ -37,6 +37,7 @@ class FamilyOffer(BaseModel):
 class FamilyVariant(BaseModel):
     storage: str | None = None
     label: str
+    official: bool = False  # a size the maker sells, per the catalogue
     colors: list[str] = []
     product_ids: list[UUID] = []
     offer_count: int = 0
@@ -52,6 +53,14 @@ class ProductFamily(BaseModel):
     label: str
     brand: str | None = None
     image: str | None = None
+    # From the curated catalogue when the line is in it: the sizes and colours
+    # the maker sells, and the headline specifications, with a note on origin.
+    curated: bool = False
+    specs: dict | None = None
+    official_storages: list[str] = []
+    official_colors: list[str] = []
+    released: str | None = None
+    specs_note: str | None = None
     variants: list[FamilyVariant] = []
     selected_storage: str | None = None
     total_offers: int = 0

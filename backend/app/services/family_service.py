@@ -17,9 +17,10 @@ import statistics
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.data.catalog_models import SPECS_NOTE, catalog_model, storage_label
 from app.models import Offer, Product
 from app.models.trust import TrustScore
 from app.schemas.family import FamilyOffer, FamilyVariant, ProductFamily
@@ -67,15 +68,14 @@ class FamilyService:
         self, line: str, seed_ids: set[uuid.UUID] | None = None
     ) -> list[_Member]:
         """Every product of the line the catalogue knows, plus the seeds."""
-        words = [w for w in re.findall(r"[a-z0-9]+", line) if len(w) > 1]
-        # The token is joined ("iphone17"); the name is not. Search on the
-        # family word alone and let the attribute check decide.
+        # Rows carry their line since the column was added; older rows are found
+        # by the family word in their name and checked the same way.
         family_word = re.match(r"[a-z]+", line)
-        stmt = select(Product)
+        stmt = select(Product).where(Product.line == line)
         if family_word:
-            stmt = stmt.where(Product.name.ilike(f"%{family_word.group(0)}%"))
-        elif words:
-            stmt = stmt.where(Product.name.ilike(f"%{words[0]}%"))
+            stmt = select(Product).where(
+                or_(Product.line == line, Product.name.ilike(f"%{family_word.group(0)}%"))
+            )
         stmt = stmt.order_by(Product.updated_at.desc()).limit(300)
         rows = list((await self.db.execute(stmt)).scalars().all())
         found = {p.id for p in rows}
@@ -124,7 +124,24 @@ class FamilyService:
     ) -> ProductFamily | None:
         members = await self.products_for_line(line, seed_ids)
         if not members:
-            return None
+            curated = catalog_model(line)
+            if curated is None:
+                return None
+            sizes = [storage_label(gb) for gb in curated["specs"].get("storage_gb", [])]
+            family = ProductFamily(
+                line=line,
+                label=curated["label"],
+                brand=curated["brand"],
+                curated=True,
+                specs=curated["specs"],
+                official_storages=sizes,
+                official_colors=list(curated.get("colors", [])),
+                released=curated.get("released"),
+                specs_note=SPECS_NOTE,
+                variants=[FamilyVariant(storage=s, label=s, official=True) for s in sizes],
+                selected_storage=selected_storage if selected_storage in sizes else None,
+            )
+            return family if see_prices else self.withhold(family)
         by_id = {m.product.id: m for m in members}
         offers_by_product = await catalog.load_offers_many(self.db, set(by_id))
         exact: list[tuple[_Member, Offer]] = []
@@ -143,11 +160,17 @@ class FamilyService:
 
         trust = await self._trust_by_retailer({o.retailer_id for _, o in exact})
 
+        curated = catalog_model(line)
+        official = [
+            storage_label(gb) for gb in (curated or {}).get("specs", {}).get("storage_gb", [])
+        ]
         buckets: dict[str | None, list[tuple[_Member, Offer]]] = {}
+        # Every size the maker sells is listed, even before a store has been
+        # seen for it; then whatever else the listings say.
+        for size in official:
+            buckets[size] = []
         for m, o in exact:
             buckets.setdefault(m.attrs.storage, []).append((m, o))
-        # Products with no offer still count as members, so every storage size
-        # the catalogue knows is listed even before its stores are fetched.
         for m in members:
             buckets.setdefault(m.attrs.storage, [])
 
@@ -205,7 +228,8 @@ class FamilyService:
             variants.append(
                 FamilyVariant(
                     storage=storage,
-                    label=storage or "Storage not stated",
+                    label=storage or "Listings not stating storage",
+                    official=storage in official,
                     colors=colors,
                     product_ids=list(products),
                     offer_count=len(rows),
@@ -223,9 +247,15 @@ class FamilyService:
         image = next((m.product.images[0] for m in members if m.product.images), None)
         family = ProductFamily(
             line=line,
-            label=label or first.attrs.line_label or line,
-            brand=first.product.brand,
+            label=(curated or {}).get("label") or label or first.attrs.line_label or line,
+            brand=(curated or {}).get("brand") or first.product.brand,
             image=image,
+            curated=curated is not None,
+            specs=(curated or {}).get("specs"),
+            official_storages=official,
+            official_colors=list((curated or {}).get("colors", [])),
+            released=(curated or {}).get("released"),
+            specs_note=SPECS_NOTE if curated else None,
             variants=variants,
             selected_storage=selected_storage
             if any(v.storage == selected_storage for v in variants)

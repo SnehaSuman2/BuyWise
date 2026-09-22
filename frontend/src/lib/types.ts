@@ -33,6 +33,45 @@ export interface ProductSearchResult {
   hint?: string | null;
 }
 
+export interface ModelSpecs {
+  display_in?: number | null;
+  refresh_hz?: number | null;
+  chip?: string | null;
+  ram_gb?: number[];
+  storage_gb: number[];
+  main_camera_mp?: number | null;
+  battery_mah?: number | null;
+  os?: string | null;
+  five_g?: boolean;
+}
+
+export interface CatalogModelCard {
+  line: string;
+  label: string;
+  brand: string;
+  category: string;
+  released?: string | null;
+  specs: ModelSpecs;
+  colors: string[];
+  image?: string | null;
+  lowest_price?: number | null;
+  store_count: number;
+  offer_count: number;
+  locked?: boolean;
+}
+
+export interface FacetValue { value: string; count: number }
+
+export interface CatalogPage {
+  category: string;
+  title: string;
+  total: number;
+  models: CatalogModelCard[];
+  facets: { brands: FacetValue[]; ram_gb: FacetValue[]; storage_gb: FacetValue[] };
+  locked?: boolean;
+  specs_note: string;
+}
+
 export interface FamilyOffer {
   offer_id: string;
   product_id: string;
@@ -60,6 +99,8 @@ export interface FamilyOffer {
 export interface FamilyVariant {
   storage?: string | null;
   label: string;
+  /** A size the maker sells, per the curated catalogue. */
+  official?: boolean;
   colors: string[];
   product_ids: string[];
   offer_count: number;
@@ -76,6 +117,12 @@ export interface ProductFamily {
   label: string;
   brand?: string | null;
   image?: string | null;
+  curated?: boolean;
+  specs?: ModelSpecs | null;
+  official_storages?: string[];
+  official_colors?: string[];
+  released?: string | null;
+  specs_note?: string | null;
   variants: FamilyVariant[];
   selected_storage?: string | null;
   total_offers: number;

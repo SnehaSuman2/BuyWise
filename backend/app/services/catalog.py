@@ -472,6 +472,7 @@ async def upsert_product(
             specifications=specifications or {},
             images=[image_url] if image_url else [],
             normalized_name=attrs.clean_title[:500],
+            line=attrs.line,
             canonical_key=key,
             source_provider=source_provider,
             source_url=source_url,
@@ -529,6 +530,8 @@ async def upsert_product(
         # enrich missing fields without overwriting known data
         if image_url and not product.images:
             product.images = [image_url]
+        if attrs.line and product.line != attrs.line:
+            product.line = attrs.line
         for field, val in (
             ("gtin", identifiers.get("gtin")),
             ("asin", identifiers.get("asin")),

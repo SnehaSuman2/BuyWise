@@ -398,7 +398,10 @@ _FAMILY_LABELS = {
     "oneplus": "OnePlus",
     "oneplusnord": "OnePlus Nord",
     "oneplusnordce": "OnePlus Nord CE",
-    "nordce": "Nord CE",
+    "nord": "OnePlus Nord",
+    "nordce": "OnePlus Nord CE",
+    "motoedge": "Motorola Edge",
+    "motog": "Moto G",
     "iqoo": "iQOO",
     "iqooz": "iQOO Z",
     "iqooneo": "iQOO Neo",
@@ -424,8 +427,6 @@ _FAMILY_LABELS = {
     "galaxynote": "Galaxy Note",
     "realmegt": "Realme GT",
     "redminote": "Redmi Note",
-    "motog": "Moto G",
-    "motoedge": "Moto Edge",
     "motorolaedge": "Motorola Edge",
     "nothingphone": "Nothing Phone",
     "thinkpadx": "ThinkPad X",
@@ -537,9 +538,17 @@ _LINE_RE = re.compile(
     r"(?:\s?(?:series\s?)?"
     r"(\d{1,3}(?!\s?(?:gb|tb|mm|hz|mah|mp|w|inch|in\b|g\b))[a-z]{0,2}))?"
     r"(?:\s?(pro\s?max|pro\s?plus|pro\+|pro|max|plus|ultra|fe|lite|neo|mini|air|edge|se|"
-    r"prime|power|turbo|classic|fold|flip))?\b",
+    r"prime|power|turbo|classic|fold|flip)|(\+))?(?![a-z0-9])",
     re.I,
 )
+# Lines people write two ways, folded to one token: "OnePlus Nord 5" and
+# "Nord 5", "Motorola Edge 60" and "Moto Edge 60".
+_FAMILY_ALIASES = {
+    "oneplusnord": "nord",
+    "oneplusnordce": "nordce",
+    "motorolaedge": "motoedge",
+    "motorolag": "motog",
+}
 
 
 def find_line(text: str):
@@ -549,7 +558,9 @@ def find_line(text: str):
     (as in "iphone case") does not. Returns (family, number, tier) or None.
     """
     for m in _LINE_RE.finditer(text):
-        family, number, tier = m.group(1), m.group(2), m.group(3)
+        family, number, tier = m.group(1), m.group(2), m.group(3) or m.group(4)
+        if tier == "+":
+            tier = "plus"
         if number or tier:
             if family.lower() == "iphone" and tier and tier.lower() == "air":
                 # Apple's line is "iPhone Air"; retailers write "iPhone 17 Air".
@@ -559,12 +570,15 @@ def find_line(text: str):
 
 
 def line_token(family: str, number: str | None, tier: str | None) -> str:
-    return re.sub(r"[\s+]", "", f"{family}{number or ''}{tier or ''}").lower()
+    fam = re.sub(r"\s+", "", family.lower())
+    fam = _FAMILY_ALIASES.get(fam, fam)
+    return re.sub(r"[\s+]", "", f"{fam}{number or ''}{tier or ''}").lower()
 
 
 def line_label(family: str, number: str | None, tier: str | None) -> str:
     """A display name for a line: "iPhone 17 Pro Max", "Galaxy S25 Ultra"."""
     key = re.sub(r"\s+", "", family.lower())
+    key = _FAMILY_ALIASES.get(key, key)
     name = _FAMILY_LABELS.get(key) or family.title()
     if number:
         shown = number if key == "pixel" else number.upper()
@@ -662,6 +676,7 @@ def normalize_title(title: str) -> str:
     t = re.sub(r"[™®©]", " ", t)
     t = re.sub(r"[\[\]{}]", " ", t)
     t = re.sub(r"\bi\s?-?\s?phone\b", "iphone", t)
+    t = re.sub(r"\((\d{1,3}[a-z]?)\)", r" \1 ", t)  # "Phone (3a)" names a model, not an aside
     t = re.sub(r"\s+", " ", t).strip()
     return t
 
@@ -778,7 +793,8 @@ def extract_attributes(
         line_tokens.append(token)
         attrs.line = token
         attrs.line_label = line_label(family, number, tier)
-        attrs.line_family = re.sub(r"\s+", "", family.lower())
+        fam = re.sub(r"\s+", "", family.lower())
+        attrs.line_family = _FAMILY_ALIASES.get(fam, fam)
         attrs.line_number = number.lower() if number else None
     chip = _CHIP_RE.search(text)
     if chip:

@@ -157,7 +157,26 @@ async def assess_new_retailers(db: AsyncSession, limit: int | None = None) -> di
     return {"pending": len(pending), "assessed": assessed, "flagged": flagged, "failed": failed}
 
 
+async def backfill_lines(db: AsyncSession) -> dict:
+    """Set products.line for rows created before the column existed."""
+    from sqlalchemy import select
+
+    from app.models import Product
+    from app.services.product_normalizer import extract_attributes
+
+    rows = (await db.execute(select(Product).where(Product.line.is_(None)))).scalars().all()
+    updated = 0
+    for product in rows:
+        line = extract_attributes(product.name, None, product.brand).line
+        if line:
+            product.line = line
+            updated += 1
+    await db.flush()
+    return {"scanned": len(rows), "updated": updated}
+
+
 JOBS = {
+    "backfill_lines": backfill_lines,
     "refresh_prices": refresh_prices,
     "check_alerts": check_alerts,
     "refresh_trust": refresh_trust,
