@@ -134,6 +134,9 @@ class ProviderResult(BaseModel, Generic[T]):
     ok: bool = True
     error: str | None = None
     cached: bool = False
+    # True when the cached answer is past its TTL, served because the provider
+    # was out of quota or unreachable. The shopper is told prices may be old.
+    stale: bool = False
     is_demo: bool = False
     latency_ms: int | None = None
 

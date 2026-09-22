@@ -78,4 +78,5 @@ class GoogleLensProvider(ImageSearchProvider):
             provider=self.name,
             engine=self.engine,
             cached=data.get("_buywise_cached", False),
+            stale=data.get("_buywise_stale", False),
         )

@@ -18,13 +18,22 @@ async def test_database_cache_round_trip_survives_process_memory():
 
 
 @pytest.mark.asyncio
-async def test_expired_rows_are_ignored_and_purged():
+async def test_expired_rows_are_ignored_but_kept_for_the_stale_fallback():
+    from datetime import timedelta
+
     key = cache.make_key("search", "amazon", {"k": "old"})
     await cache._database.set(key, '{"stale": true}', ttl=-1)
     cache._memory._store.clear()
+    # Expired, so not served as a fresh answer...
     assert await cache.get_json(key) is None
-    await cache._database.set(key, '{"stale": true}', ttl=-1)
-    assert await cache.purge_expired() >= 1
+    # ...but still there for the quota fallback, and not purged while recent.
+    cache._memory._store.clear()
+    assert await cache.get_json(key, allow_stale=True) == {"stale": True}
+    assert await cache.purge_expired() == 0
+    # Once it is older than the grace period it goes.
+    assert await cache._database.purge_expired(grace=timedelta(seconds=0)) >= 1
+    cache._memory._store.clear()
+    assert await cache.get_json(key, allow_stale=True) is None
 
 
 @pytest.mark.asyncio

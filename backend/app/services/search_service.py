@@ -454,12 +454,14 @@ class SearchService:
     ) -> tuple[list[NormalizedListing], dict]:
         providers_used, warnings, listings, cached = [], [], [], False
         failures: list[str] = []
+        stale = False
         for provider in registry.product_search_providers():
             res = await provider.search_products(
                 query, max_results=40, min_price=min_price, max_price=max_price
             )
             providers_used.append(f"{provider.name}:{provider.engine}")
             cached = cached or res.cached
+            stale = stale or res.stale
             if not res.ok:
                 warnings.append(f"{provider.engine} temporarily unavailable.")
                 failures.append(res.error or provider.engine)
@@ -472,6 +474,7 @@ class SearchService:
                 res = await provider.search_retailer(query, max_results=10)
                 providers_used.append(f"{provider.name}:{provider.engine}")
                 cached = cached or res.cached
+                stale = stale or res.stale
                 if res.ok:
                     listings.extend(res.items)
                 else:
@@ -491,6 +494,11 @@ class SearchService:
                 "Live retailer search is temporarily unavailable (search provider quota "
                 "or credentials). Results may be incomplete."
             ]
+        if stale:
+            warnings.append(
+                "Live search is temporarily unavailable, so these are the most recent "
+                "results BuyWise has. Prices may have changed since."
+            )
         return priced, {
             "providers": providers_used,
             "warnings": warnings,

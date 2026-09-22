@@ -73,8 +73,12 @@ class Settings(BaseSettings):
 
     # --- Redis / cache / jobs ---
     REDIS_URL: str = ""
-    CACHE_TTL_SEARCH_SECONDS: int = 6 * 60 * 60
-    CACHE_TTL_OFFERS_SECONDS: int = 3 * 60 * 60
+    # A day. Retail prices move slowly, a repeat search inside the window is free,
+    # and a longer window makes a small search-API allowance go much further. Past
+    # the window the cached answer is still kept and served if the provider is out
+    # of quota, labelled as old rather than dropped.
+    CACHE_TTL_SEARCH_SECONDS: int = 24 * 60 * 60
+    CACHE_TTL_OFFERS_SECONDS: int = 12 * 60 * 60
     CACHE_TTL_TRUST_SECONDS: int = 7 * 24 * 60 * 60
     OFFER_REFRESH_SECONDS: int = 6 * 60 * 60
     # A product with fewer than two offers is refreshed sooner: one offer is not a comparison.

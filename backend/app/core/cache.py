@@ -26,6 +26,10 @@ logger = logging.getLogger(__name__)
 
 STATS = {"hits": 0, "misses": 0, "sets": 0, "backend": "memory"}
 
+# How long an expired cache row is kept so it can still answer when the search
+# provider is unreachable or out of quota.
+STALE_GRACE = timedelta(days=7)
+
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -36,14 +40,16 @@ class _MemoryCache:
         self._store: dict[str, tuple[float, str]] = {}
         self._lock = asyncio.Lock()
 
-    async def get(self, key: str) -> str | None:
+    async def get(self, key: str, allow_stale: bool = False) -> str | None:
         item = self._store.get(key)
         if not item:
             return None
         expires, value = item
         if expires < time.time():
-            self._store.pop(key, None)
-            return None
+            # Expired entries are kept, not dropped: they are the material the
+            # stale fallback uses when the provider is out of quota. Size-based
+            # eviction below still bounds the store.
+            return value if allow_stale else None
         return value
 
     async def set(self, key: str, value: str, ttl: int) -> None:
@@ -78,7 +84,7 @@ class _DatabaseCache:
 
         return async_session_factory
 
-    async def get(self, key: str) -> str | None:
+    async def get(self, key: str, allow_stale: bool = False) -> str | None:
         from app.models.cache import ApiCache
 
         async with self._factory()() as session:
@@ -89,9 +95,10 @@ class _DatabaseCache:
             if expires.tzinfo is None:
                 expires = expires.replace(tzinfo=timezone.utc)
             if expires < _utcnow():
-                await session.delete(row)
-                await session.commit()
-                return None
+                # Kept, not deleted: an expired answer is still the best answer
+                # available while the provider is unreachable or out of quota.
+                # purge_expired drops rows once they are too old to be useful.
+                return row.value if allow_stale else None
             return row.value
 
     async def set(self, key: str, value: str, ttl: int) -> None:
@@ -115,13 +122,21 @@ class _DatabaseCache:
                 await session.delete(row)
                 await session.commit()
 
-    async def purge_expired(self) -> int:
+    async def purge_expired(self, grace: timedelta = STALE_GRACE) -> int:
+        """Drop rows expired longer ago than the grace period.
+
+        Recently-expired rows are deliberately kept: they are what the search
+        layer falls back on when the provider is out of quota, so deleting them
+        the moment they expire would throw away the safety net.
+        """
         from sqlalchemy import delete
 
         from app.models.cache import ApiCache
 
         async with self._factory()() as session:
-            result = await session.execute(delete(ApiCache).where(ApiCache.expires_at < _utcnow()))
+            result = await session.execute(
+                delete(ApiCache).where(ApiCache.expires_at < _utcnow() - grace)
+            )
             await session.commit()
             return int(result.rowcount or 0)
 
@@ -173,14 +188,24 @@ class Cache:
         raw = json.dumps(parts, sort_keys=True, default=str)
         return f"buywise:{namespace}:{hashlib.sha256(raw.encode()).hexdigest()[:32]}"
 
-    async def get_json(self, key: str) -> Any | None:
+    async def get_json(self, key: str, allow_stale: bool = False) -> Any | None:
+        """Read a cached value. With allow_stale, an expired value is returned too.
+
+        Stale is for when the alternative is nothing: the search vendor is out of
+        quota or unreachable, and yesterday's prices, clearly labelled, beat an
+        empty page.
+        """
         # The memory tier fronts every backend so a hot key costs no round trip.
-        value = await self._memory.get(key)
+        value = await self._memory.get(key, allow_stale)
         if value is None:
             backend = await self._backend()
             if backend is not self._memory:
                 try:
-                    value = await backend.get(key)
+                    value = (
+                        await backend.get(key, allow_stale)
+                        if backend is self._database
+                        else await backend.get(key)
+                    )
                 except Exception as exc:  # pragma: no cover
                     logger.warning("Cache get failed: %s", type(exc).__name__)
                     if backend is self._database:
@@ -227,7 +252,7 @@ class Cache:
             pass
 
     async def purge_expired(self) -> int:
-        """Remove expired database rows. Returns the number deleted."""
+        """Remove cache rows too old to serve even as a stale answer."""
         try:
             return await self._database.purge_expired()
         except Exception as exc:  # pragma: no cover

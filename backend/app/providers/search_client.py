@@ -23,6 +23,7 @@ what the catalogue already knows.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from typing import Any
 
@@ -57,6 +58,21 @@ _QUOTA_MARKERS = (
 )
 
 
+# Parameters that carry a shopper's words. Normalising these for the cache key
+# means "iPhone 17", "iphone 17" and "iphone  17!" are one cached answer rather
+# than three paid searches. The vendor still receives the original text.
+_QUERY_PARAMS = ("q", "k", "query")
+
+
+def _cache_params(params: dict[str, Any]) -> dict[str, Any]:
+    out = dict(params)
+    for key in _QUERY_PARAMS:
+        value = out.get(key)
+        if isinstance(value, str):
+            out[key] = re.sub(r"[^a-z0-9+]+", " ", value.lower()).strip()
+    return out
+
+
 def _stat(engine: str) -> dict[str, Any]:
     return STATS.setdefault(
         engine,
@@ -66,6 +82,7 @@ def _stat(engine: str) -> dict[str, Any]:
             "failures": 0,
             "rate_limited": 0,
             "short_circuited": 0,
+            "stale_hits": 0,
             "total_latency_ms": 0,
             "last_error": None,
         },
@@ -133,6 +150,16 @@ class SearchClient:
     def enabled(self) -> bool:
         return bool(self.api_key)
 
+    async def _stale(self, cache_key: str, stat: dict[str, Any]) -> dict[str, Any] | None:
+        """The expired answer for this query, when a fresh one cannot be had."""
+        stale = await cache.get_json(cache_key, allow_stale=True)
+        if stale is None:
+            return None
+        stat["stale_hits"] += 1
+        stale["_buywise_cached"] = True
+        stale["_buywise_stale"] = True
+        return stale
+
     async def search(
         self, engine: str, params: dict[str, Any], *, cache_ttl: int = 3600
     ) -> dict[str, Any]:
@@ -143,7 +170,7 @@ class SearchClient:
         # The cache key ignores the vendor on purpose: the same Google Shopping query
         # answered by either vendor is the same data, and switching vendor should not
         # throw away a warm cache.
-        cache_key = cache.make_key("search", engine, clean_params)
+        cache_key = cache.make_key("search", engine, _cache_params(clean_params))
         if cache_ttl > 0:
             cached = await cache.get_json(cache_key)
             if cached is not None:
@@ -152,6 +179,9 @@ class SearchClient:
                 return cached
 
         if breaker_open():
+            stale = await self._stale(cache_key, stat) if cache_ttl > 0 else None
+            if stale is not None:
+                return stale
             stat["short_circuited"] += 1
             raise SearchApiQuotaExceeded(BREAKER["reason"] or "search API unavailable")
 
@@ -190,6 +220,9 @@ class SearchClient:
             stat["last_error"] = "rate_limited"
             if any(m in body_text for m in _QUOTA_MARKERS):
                 _open_breaker(f"{self.provider} search quota reached", self.cooldown)
+                stale = await self._stale(cache_key, stat) if cache_ttl > 0 else None
+                if stale is not None:
+                    return stale
                 raise SearchApiQuotaExceeded(f"{self.provider} search quota reached")
             _open_breaker(f"{self.provider} rate limit", 60)
             raise SearchApiRateLimited(f"{self.provider} rate limit reached")
@@ -198,6 +231,9 @@ class SearchClient:
             stat["last_error"] = f"http_{response.status_code}"
             if any(m in body_text for m in _QUOTA_MARKERS):
                 _open_breaker(f"{self.provider} search quota reached", self.cooldown)
+                stale = await self._stale(cache_key, stat) if cache_ttl > 0 else None
+                if stale is not None:
+                    return stale
                 raise SearchApiQuotaExceeded(f"{self.provider} search quota reached")
             raise SearchApiError(f"{engine} returned HTTP {response.status_code}")
         try:
