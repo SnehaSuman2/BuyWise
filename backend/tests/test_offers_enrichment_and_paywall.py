@@ -273,3 +273,46 @@ def test_free_plan_copy_matches_the_paywall(paywall):
     joined = " ".join(free.features)
     assert "Lowest price" not in joined and "price history" not in joined.lower()
     assert "Trust Scores" in joined
+
+
+@pytest.mark.asyncio
+async def test_slow_store_lookups_do_not_hold_the_search(client, admin_headers, monkeypatch):
+    import asyncio
+
+    from app.services.search_service import drain_background_tasks
+
+    class SlowEnricher(FakeEnricher):
+        async def offers_for(self, *, token, product_id):
+            await asyncio.sleep(0.5)
+            return await super().offers_for(token=token, product_id=product_id)
+
+    google = FakeSearch(
+        [
+            listing(
+                "Lifelong LightBeam Plus Smart Projector",
+                "Amazon.in",
+                "amazon.in",
+                7999,
+                multiple_sources=True,
+                enrichment_token="tok-lb",
+            )
+        ]
+    )
+    stores = SlowEnricher(
+        [listing("Lifelong LightBeam Plus Smart Projector", "Croma", "croma.com", 7499)]
+    )
+    monkeypatch.setattr(registry, "product_search_providers", lambda: [google])
+    monkeypatch.setattr(registry, "retailer_search_providers", lambda: [FakeAmazon()])
+    monkeypatch.setattr(registry, "offers_enricher", lambda: stores)
+    monkeypatch.setattr(get_settings(), "SEARCH_ENRICH_WAIT_SECONDS", 0.05)
+
+    r = await client.post(
+        "/api/v1/search", headers=admin_headers, json={"query": "lifelong lightbeam"}
+    )
+    product = r.json()["results"][0]
+    assert product["offer_count"] == 1  # answered before the slow lookup finished
+
+    await drain_background_tasks()  # the lookup still completes on its own
+    page = await client.get(f"/api/v1/products/{product['id']}/offers", headers=admin_headers)
+    assert page.json()["total_offers"] == 2
+    assert stores.asked == [("tok-lb", None)]

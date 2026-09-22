@@ -125,6 +125,20 @@ class OfferService:
             return [], providers, [f"Store prices from Google unavailable ({res.error})."]
         return list(res.items), providers, []
 
+    @staticmethod
+    async def enrich_in_own_session(product_id: uuid.UUID) -> bool:
+        """enrich_if_thin with a session of its own, so it can outlive the request
+        that started it. Used by search to time-box the wait for store lookups."""
+        from app.core.database import async_session_factory
+
+        async with async_session_factory() as session:
+            product = await catalog.load_product(session, product_id)
+            if product is None:
+                return False
+            ok = await OfferService(session).enrich_if_thin(product)
+            await session.commit()
+            return ok
+
     async def enrich_if_thin(self, product: Product) -> bool:
         """First sight of a product that Google says several stores sell: fetch them.
 

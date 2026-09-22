@@ -38,6 +38,16 @@ from app.services.product_normalizer import extract_attributes, search_query_for
 logger = logging.getLogger(__name__)
 
 
+# Store lookups still running after their search answered. Tests drain this;
+# in production the tasks simply finish and write to the database.
+BACKGROUND_TASKS: dict[asyncio.Task, object] = {}
+
+
+async def drain_background_tasks() -> None:
+    while BACKGROUND_TASKS:
+        await asyncio.gather(*list(BACKGROUND_TASKS), return_exceptions=True)
+
+
 @dataclass
 class ListingGroup:
     reference: Candidate
@@ -247,6 +257,11 @@ class SearchService:
         self, request: SearchRequest, user_id: uuid.UUID | None = None, user=None
     ) -> SearchResponse:
         started = time.perf_counter()
+        from app.services.subscription_service import entitlements_for
+
+        # Read entitlements now: enrichment commits mid-request, which expires the
+        # user instance, and an async session will not lazily refresh it later.
+        see_prices = (await entitlements_for(self.db, user)).see_prices
         warnings: list[str] = []
         providers_used: list[str] = []
         cached = False
@@ -390,7 +405,12 @@ class SearchService:
             if ref:
                 results.insert(0, await self._result_for_product(ref, None))
 
+        before = {r.id: r.offer_count for r in results}
         results = await self._enrich_top(results)
+        if any(r.offer_count > before.get(r.id, 0) for r in results):
+            enricher = registry.offers_enricher()
+            if enricher is not None:
+                providers_used.append(f"{enricher.name}:{enricher.engine}")
         results, hidden_non_products = hide_non_product_cards(results, accessory_query)
         if hidden_non_products:
             warnings.append(
@@ -403,9 +423,7 @@ class SearchService:
                 f"of the same model (likely spam or mismatched listings)."
             )
         results = self._sort(results, request.sort_by)
-        from app.services.subscription_service import entitlements_for
-
-        if not (await entitlements_for(self.db, user)).see_prices:
+        if not see_prices:
             results = self.withhold_prices(results)
         total = len(results)
         start = (request.page - 1) * request.page_size
@@ -645,13 +663,29 @@ class SearchService:
                     candidates.append((r, product))
         if not candidates:
             return results
-        service = OfferService(self.db)
-        outcomes = await asyncio.gather(
-            *[service.enrich_if_thin(p) for _, p in candidates], return_exceptions=True
-        )
-        refreshed = {r.id for (r, _), ok in zip(candidates, outcomes, strict=True) if ok is True}
+        # Each lookup runs in its own session so it can finish after this request
+        # has answered. The search waits a few seconds for whatever completes and
+        # merges that; the rest lands on the product page when it is opened.
+        # Commit first: a product created moments ago in this session does not
+        # exist yet for a session of its own.
+        pending_ids = [(r, p.id) for r, p in candidates]
+        await self.db.commit()
+        tasks = {
+            asyncio.create_task(OfferService.enrich_in_own_session(pid)): r
+            for r, pid in pending_ids
+        }
+        BACKGROUND_TASKS.update(tasks)
+        done, pending = await asyncio.wait(tasks, timeout=self.settings.SEARCH_ENRICH_WAIT_SECONDS)
+        for t in done:
+            BACKGROUND_TASKS.pop(t, None)
+        for t in pending:
+            t.add_done_callback(lambda t: BACKGROUND_TASKS.pop(t, None))
+        refreshed = {
+            tasks[t].id for t in done if not t.cancelled() and t.exception() is None and t.result()
+        }
         if not refreshed:
             return results
+        self.db.expire_all()
         rebuilt = []
         for r in results:
             if r.id in refreshed:

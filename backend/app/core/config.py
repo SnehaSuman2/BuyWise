@@ -86,6 +86,9 @@ class Settings(BaseSettings):
     # After a fresh search, ask Google for every store's price on up to this many of
     # the results it flagged as sold by several stores. One vendor call each, cached.
     SEARCH_ENRICH_LIMIT: int = 6
+    # How long a search waits for those store lookups before answering. Lookups
+    # still running carry on in the background and show up on the product page.
+    SEARCH_ENRICH_WAIT_SECONDS: float = 6.0
     # Whether visitors without Pro see prices at all. False shows prices to everyone
     # and gates only the retailer-by-retailer comparison.
     PAYWALL_PRICES: bool = True
