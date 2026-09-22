@@ -99,7 +99,10 @@ async def test_category_page_filters_by_spec_and_shows_live_prices(
 
 @pytest.mark.asyncio
 async def test_category_prices_are_withheld_without_pro(
-    client, admin_headers, paywall, monkeypatch  # noqa: F811
+    client,
+    admin_headers,
+    paywall,
+    monkeypatch,  # noqa: F811
 ):
     google = FakeSearch(
         [listing("Apple iPhone 17 (Black, 256 GB)", "Flipkart", "flipkart.com", 79999)]

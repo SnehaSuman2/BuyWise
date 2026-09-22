@@ -22,6 +22,16 @@ class RazorpayError(Exception):
     pass
 
 
+class RazorpayAuthError(RazorpayError):
+    """Razorpay rejected our key id and secret.
+
+    Kept apart from every other failure because the cause and the cure are
+    different: nothing is wrong with the shopper or their payment, our own
+    credentials are wrong, empty or from the other mode. Without this the
+    logs said only "Razorpay HTTP 401" among ordinary upstream errors.
+    """
+
+
 def verify_payment_signature(
     order_id: str, payment_id: str, signature: str, key_secret: str
 ) -> bool:
@@ -71,6 +81,12 @@ class RazorpayClient:
                 desc = (resp.json().get("error") or {}).get("description")
             except ValueError:
                 desc = None
+            if resp.status_code in (401, 403):
+                raise RazorpayAuthError(
+                    f"Razorpay rejected the API credentials (HTTP {resp.status_code}): "
+                    f"{desc or 'unauthorized'}. Check RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET "
+                    f"are the pair from the same account and the same mode."
+                )
             raise RazorpayError(f"Razorpay HTTP {resp.status_code}: {desc or 'error'}")
         return resp.json()
 

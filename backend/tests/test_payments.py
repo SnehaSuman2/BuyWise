@@ -201,3 +201,46 @@ async def test_webhook_idempotent_and_signature_checked(client, db, user_tokens)
         "/api/v1/subscription", headers={"Authorization": f"Bearer {user_tokens['access_token']}"}
     )
     assert sub.json()["is_pro"] is True and sub.json()["plan"] == "pro_yearly"
+
+
+def test_every_paid_plan_clears_the_razorpay_minimum():
+    """Razorpay refuses an order under a rupee, so no plan may price below it."""
+    from app.services.subscription_service import MIN_ORDER_PAISE, plans
+
+    paid = [p for p in plans() if p.price_inr > 0]
+    assert paid, "there should be paid plans"
+    for plan in paid:
+        assert plan.price_inr * 100 >= MIN_ORDER_PAISE, plan.id
+
+
+@pytest.mark.asyncio
+async def test_refused_credentials_do_not_sign_the_shopper_out(client, auth_headers, monkeypatch):
+    """Razorpay rejecting our key is our problem, not an expired session.
+
+    A 401 here would reach the frontend's token-refresh path and could sign a
+    paying customer out over a server misconfiguration.
+    """
+    from app.core.config import get_settings
+    from app.providers.payments.razorpay import RazorpayAuthError
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "RAZORPAY_KEY_ID", "rzp_test_wrong")
+    monkeypatch.setattr(settings, "RAZORPAY_KEY_SECRET", "wrong")
+
+    async def refuse(self, *args, **kwargs):
+        raise RazorpayAuthError("Razorpay rejected the API credentials (HTTP 401)")
+
+    monkeypatch.setattr(RazorpayClient, "create_order", refuse)
+    r = await client.post(
+        "/api/v1/payments/create", json={"plan": "pro_monthly"}, headers=auth_headers
+    )
+    assert r.status_code == 502, r.text
+    assert "misconfigured" in r.json()["detail"].lower()
+    # The secret must never travel to the client, not even in an error.
+    assert "wrong" not in r.text
+
+
+def test_auth_failures_are_told_apart_from_other_vendor_errors():
+    from app.providers.payments.razorpay import RazorpayAuthError, RazorpayError
+
+    assert issubclass(RazorpayAuthError, RazorpayError)

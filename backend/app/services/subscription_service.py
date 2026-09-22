@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.models import Payment, PriceAlert, SavedProduct, Subscription, User, WebhookEvent
 from app.providers.payments.razorpay import (
+    RazorpayAuthError,
     RazorpayClient,
     RazorpayError,
     verify_payment_signature,
@@ -30,6 +31,9 @@ from app.providers.payments.razorpay import (
 from app.schemas.billing import CreateOrderResponse, PlanInfo, SubscriptionResponse
 
 logger = logging.getLogger(__name__)
+
+# Razorpay will not create an order below one rupee.
+MIN_ORDER_PAISE = 100
 
 
 def _now() -> datetime:
@@ -270,11 +274,25 @@ class SubscriptionService:
         if plan.price_inr <= 0:
             raise HTTPException(status_code=400, detail="This plan is free")
         amount = plan.price_inr * 100
+        if amount < MIN_ORDER_PAISE:
+            # Razorpay rejects anything under a rupee. Today no plan can reach
+            # here, and a mispriced one should fail on our side with a clear
+            # reason rather than as an opaque error from the vendor.
+            logger.error("Plan %s is priced below the Razorpay minimum: %d paise", plan.id, amount)
+            raise HTTPException(status_code=400, detail="This plan is priced below the minimum")
         receipt = f"bw_{uuid.uuid4().hex[:20]}"
         try:
             order = await self.client.create_order(
                 amount, "INR", receipt, {"user_id": str(user.id), "plan": plan.id}
             )
+        except RazorpayAuthError as exc:
+            # Our credentials, not the shopper's problem. Deliberately not a 401:
+            # the caller is authenticated, and the frontend treats 401 as an
+            # expired session and would sign them out over our configuration.
+            logger.error("Razorpay credentials refused: %s", exc)
+            raise HTTPException(
+                status_code=502, detail="Payments are misconfigured. Please try again later."
+            ) from exc
         except RazorpayError as exc:
             logger.error("Razorpay order creation failed: %s", exc)
             raise HTTPException(status_code=502, detail="Could not create payment order") from exc

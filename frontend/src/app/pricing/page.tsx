@@ -10,7 +10,9 @@ import { track } from "@/lib/analytics";
 import { formatPrice, formatDate } from "@/lib/utils";
 import type { PlanInfo, SubscriptionStatus } from "@/lib/types";
 
-declare global { interface Window { Razorpay?: new (opts: Record<string, unknown>) => { open: () => void } } }
+type RazorpayFailure = { error?: { description?: string; reason?: string; step?: string } };
+type RazorpayCheckout = { open: () => void; on: (event: string, handler: (r: RazorpayFailure) => void) => void };
+declare global { interface Window { Razorpay?: new (opts: Record<string, unknown>) => RazorpayCheckout } }
 
 function loadRazorpay(): Promise<boolean> {
   return new Promise((resolve) => {
@@ -80,6 +82,15 @@ export default function PricingPage() {
           } catch (e) { setMsg({ ok: false, text: `Payment could not be verified: ${(e as ApiError).message}` }); }
         },
         modal: { ondismiss: () => setBusy(null) },
+      });
+      // A payment can fail inside the modal (a declined card, a UPI request that
+      // times out) without the handler above ever running. Without this the
+      // modal simply closed and the page said nothing at all.
+      rzp.on("payment.failed", (r) => {
+        const why = r?.error?.description || r?.error?.reason || "the payment did not go through";
+        track("payment_failed", { plan: planId, reason: r?.error?.reason });
+        setMsg({ ok: false, text: `Payment failed: ${why}. Nothing was charged. You can try again, or use another method.` });
+        setBusy(null);
       });
       rzp.open();
     } catch (e) { setMsg({ ok: false, text: (e as Error).message }); } finally { setBusy(null); }
