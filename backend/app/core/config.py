@@ -143,7 +143,12 @@ class Settings(BaseSettings):
     SERPAPI_ENABLE_GOOGLE_REVERSE_IMAGE: bool = False
 
     # --- AI ---
+    # Any OpenAI-compatible endpoint: OpenAI itself, Groq, Azure AI Foundry, a model
+    # you host. Only the base URL, key and model name change.
+    #   Groq (free tier):  https://api.groq.com/openai/v1
+    #   OpenRouter:        https://openrouter.ai/api/v1
     OPENAI_API_KEY: str = ""
+    OPENAI_BASE_URL: str = "https://api.openai.com/v1"
     OPENAI_MODEL: str = "gpt-4o-mini"
     OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
     GEMINI_API_KEY: str = ""
@@ -152,6 +157,8 @@ class Settings(BaseSettings):
     GEMINI_MODEL: str = "gemini-3.6-flash"
     GEMINI_EMBEDDING_MODEL: str = "gemini-embedding-001"
     # auto picks whichever key is configured, preferring Gemini (it has a free tier).
+    # With both configured, auto also falls back to the other one when the first is
+    # out of quota, so a capped free tier does not silently disable AI answers.
     AI_PROVIDER: Literal["auto", "openai", "gemini", "demo"] = "auto"
 
     # --- Razorpay ---

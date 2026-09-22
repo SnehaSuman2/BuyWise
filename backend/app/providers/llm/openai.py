@@ -1,4 +1,8 @@
-"""OpenAI provider via the HTTPS API (no SDK dependency). Key is never logged."""
+"""Client for any OpenAI-compatible chat API (no SDK dependency). Key is never logged.
+
+Works unchanged against OpenAI, Groq, OpenRouter, Azure AI Foundry or a model you
+host yourself: set OPENAI_BASE_URL, OPENAI_API_KEY and OPENAI_MODEL.
+"""
 
 from __future__ import annotations
 
@@ -20,6 +24,7 @@ class OpenAIProvider(BaseLLMProvider):
     def __init__(self) -> None:
         s = get_settings()
         self.api_key = s.OPENAI_API_KEY
+        self.base_url = s.OPENAI_BASE_URL.rstrip("/")
         self.model = s.OPENAI_MODEL
         self.embedding_model = s.OPENAI_EMBEDDING_MODEL
 
@@ -44,7 +49,7 @@ class OpenAIProvider(BaseLLMProvider):
         try:
             resp = await request_with_retry(
                 "POST",
-                "https://api.openai.com/v1/chat/completions",
+                f"{self.base_url}/chat/completions",
                 headers={
                     "Authorization": f"Bearer {self.api_key}",
                     "Content-Type": "application/json",
@@ -109,7 +114,7 @@ class OpenAIProvider(BaseLLMProvider):
             raise AIProviderError("OPENAI_API_KEY not configured")
         resp = await request_with_retry(
             "POST",
-            "https://api.openai.com/v1/embeddings",
+            f"{self.base_url}/embeddings",
             headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
             json={"model": self.embedding_model, "input": text[:8000]},
             timeout=30.0,
