@@ -3,12 +3,13 @@ what the catalogue currently knows about their prices."""
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.data.catalog_models import CATEGORIES, SPECS_NOTE, models_for_category
+from app.data.catalog_models import CATALOG_MODELS, CATEGORIES, SPECS_NOTE, models_for_category
 from app.models import Offer, Product
 from app.schemas.catalog import CatalogFacets, CatalogModelCard, CatalogPage, FacetValue
 from app.services import catalog
@@ -148,3 +149,77 @@ class CatalogBrowser:
             locked=not see_prices,
             specs_note=SPECS_NOTE,
         )
+
+
+# Words that mean "show me the category", and family words that mean a brand.
+_CATEGORY_WORDS = {
+    "phone": "phones",
+    "phones": "phones",
+    "smartphone": "phones",
+    "smartphones": "phones",
+    "mobile": "phones",
+    "mobiles": "phones",
+}
+_FAMILY_BRANDS = {
+    "iphone": "Apple",
+    "iphones": "Apple",
+    "galaxy": "Samsung",
+    "pixel": "Google",
+    "redmi": "Xiaomi",
+    "poco": "POCO",
+    "nord": "OnePlus",
+    "iqoo": "iQOO",
+}
+_MONEY = r"(?:rs\.?|₹|inr)?\s*(\d[\d,]*)\s*(k|thousand)?"
+_MAX_RE = re.compile(rf"\b(?:under|below|upto|up to|less than|within|max|maximum)\s*{_MONEY}", re.I)
+_MIN_RE = re.compile(rf"\b(?:above|over|more than|from|min|minimum|starting)\s*{_MONEY}", re.I)
+_BETWEEN_RE = re.compile(rf"\b(?:between)\s*{_MONEY}\s*(?:and|to|-)\s*{_MONEY}", re.I)
+_RAM_RE = re.compile(r"\b(\d{1,2})\s*gb\s*ram\b", re.I)
+_STORAGE_RE = re.compile(r"\b(\d{2,4})\s*(gb|tb)\b(?!\s*ram)", re.I)
+
+
+def _rupees(num: str, unit: str | None) -> float:
+    value = float(num.replace(",", ""))
+    return value * 1000 if unit else value
+
+
+def catalog_for_query(query: str) -> tuple[str, dict] | None:
+    """(category, filters) when a typed query browses a category rather than
+    naming one product: "phone under 20000", "samsung 8gb ram", "iphone".
+
+    Returns None for anything else, including a query that names a line
+    ("iphone 17"), which the family view answers instead.
+    """
+    from app.services.product_normalizer import extract_attributes
+
+    if extract_attributes(query or "").line:
+        return None
+    text = (query or "").lower()
+    words = set(re.findall(r"[a-z0-9+]+", text))
+    category = next((_CATEGORY_WORDS[w] for w in words if w in _CATEGORY_WORDS), None)
+    brands = {m["brand"] for m in CATALOG_MODELS if m["brand"].lower() in words}
+    brands |= {_FAMILY_BRANDS[w] for w in words if w in _FAMILY_BRANDS}
+    if category is None and brands:
+        category = "phones"
+    if category is None:
+        return None
+    filters: dict = {"brands": sorted(brands)}
+    between = _BETWEEN_RE.search(text)
+    if between:
+        lo, lo_unit, hi, hi_unit = between.groups()
+        filters["min_price"], filters["max_price"] = _rupees(lo, lo_unit), _rupees(hi, hi_unit)
+    else:
+        if m := _MAX_RE.search(text):
+            filters["max_price"] = _rupees(m.group(1), m.group(2))
+        if m := _MIN_RE.search(text):
+            filters["min_price"] = _rupees(m.group(1), m.group(2))
+    if m := _RAM_RE.search(text):
+        filters["ram_gb"] = [int(m.group(1))]
+    storages = [
+        int(float(n) * (1024 if u.lower() == "tb" else 1))
+        for n, u in _STORAGE_RE.findall(text)
+        if not (filters.get("ram_gb") and int(n) in filters["ram_gb"])
+    ]
+    if storages:
+        filters["storage_gb"] = storages
+    return category, filters

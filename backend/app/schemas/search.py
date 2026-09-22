@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from app.schemas.catalog import CatalogPage
 from app.schemas.common import DataMeta
 from app.schemas.family import ProductFamily
 from app.schemas.product import ProductSearchResult
@@ -33,4 +34,9 @@ class SearchResponse(BaseModel):
     # When the query names a product line, every variant and retailer of that
     # line in one place. The result cards remain below it.
     family: ProductFamily | None = None
+    # When the query browses a category ("phone under 20000"), the curated
+    # models that fit, with the filters read from the query so the page can
+    # show them as chosen and let the shopper change them.
+    catalog: CatalogPage | None = None
+    catalog_filters: dict | None = None
     meta: DataMeta

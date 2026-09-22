@@ -144,7 +144,18 @@ export interface SearchResponse {
   results: ProductSearchResult[];
   /** Present when the query names a product line: every variant and store in one place. */
   family?: ProductFamily | null;
+  /** When the query browses a category ("phone under 20000"): curated models that fit, and the filters read from the query. */
+  catalog?: CatalogPage | null;
+  catalog_filters?: CatalogFilters | null;
   meta: DataMeta;
+}
+
+export interface CatalogFilters {
+  brands?: string[];
+  ram_gb?: number[];
+  storage_gb?: number[];
+  min_price?: number;
+  max_price?: number;
 }
 
 export interface ProductVariant {

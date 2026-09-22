@@ -99,8 +99,8 @@ async def test_category_page_filters_by_spec_and_shows_live_prices(
 
 @pytest.mark.asyncio
 async def test_category_prices_are_withheld_without_pro(
-    client, admin_headers, paywall, monkeypatch
-):  # noqa: F811
+    client, admin_headers, paywall, monkeypatch  # noqa: F811
+):
     google = FakeSearch(
         [listing("Apple iPhone 17 (Black, 256 GB)", "Flipkart", "flipkart.com", 79999)]
     )
@@ -137,3 +137,70 @@ async def test_family_lists_official_sizes_and_specs(client, admin_headers, monk
     r = await client.get("/api/v1/products/family?line=pixel9a", headers=admin_headers)
     assert r.status_code == 200
     assert r.json()["official_storages"] == ["128GB", "256GB"] and r.json()["total_offers"] == 0
+
+
+def test_category_queries_are_read_with_their_filters():
+    from app.services.catalog_browse import catalog_for_query
+
+    assert catalog_for_query("phone under 20000") == (
+        "phones",
+        {"brands": [], "max_price": 20000.0},
+    )
+    assert catalog_for_query("best 5g mobiles under 20k") == (
+        "phones",
+        {"brands": [], "max_price": 20000.0},
+    )
+    assert catalog_for_query("samsung phone 8gb ram 256gb") == (
+        "phones",
+        {"brands": ["Samsung"], "ram_gb": [8], "storage_gb": [256]},
+    )
+    assert catalog_for_query("iphone") == ("phones", {"brands": ["Apple"]})
+    assert catalog_for_query("phones between 30000 and 50000")[1] == {
+        "brands": [],
+        "min_price": 30000.0,
+        "max_price": 50000.0,
+    }
+    assert catalog_for_query("iphone 17") is None  # a named line: the family answers
+    assert catalog_for_query("sony wh-1000xm5") is None
+    assert catalog_for_query("wireless headphones") is None
+
+
+@pytest.mark.asyncio
+async def test_category_search_carries_the_spec_panel(client, admin_headers, monkeypatch):
+    google = FakeSearch(
+        [listing("Apple iPhone 17 (Black, 256 GB)", "Flipkart", "flipkart.com", 79999)]
+    )
+    monkeypatch.setattr(registry, "product_search_providers", lambda: [google])
+    monkeypatch.setattr(registry, "retailer_search_providers", lambda: [FakeAmazon()])
+    monkeypatch.setattr(get_settings(), "SEARCH_ENRICH_LIMIT", 0)
+    await client.post("/api/v1/search", headers=admin_headers, json={"query": "iphone 17"})
+
+    body = (
+        await client.post(
+            "/api/v1/search", headers=admin_headers, json={"query": "apple phone under 90000"}
+        )
+    ).json()
+    assert body["family"] is None and body["catalog"] is not None
+    assert body["catalog_filters"] == {"brands": ["Apple"], "max_price": 90000.0}
+    assert [m["line"] for m in body["catalog"]["models"]] == [
+        "iphone17"
+    ]  # the only Apple with a price under 90k
+
+    body = (
+        await client.post(
+            "/api/v1/search", headers=admin_headers, json={"query": "samsung 12gb ram"}
+        )
+    ).json()
+    lines = {m["line"] for m in body["catalog"]["models"]}
+    assert (
+        lines
+        and all(l.startswith("galaxy") for l in lines)
+        and "galaxya56" in lines
+        and "galaxys25fe" not in lines
+    )
+
+    # A named line gets the family, not the catalogue panel.
+    body = (
+        await client.post("/api/v1/search", headers=admin_headers, json={"query": "iphone 17"})
+    ).json()
+    assert body["family"] is not None and body["catalog"] is None

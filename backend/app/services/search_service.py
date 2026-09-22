@@ -456,8 +456,12 @@ class SearchService:
             )
         results = self._sort(results, request.sort_by)
         family = None
+        catalog_page = None
+        catalog_filters = None
         if query_type == "text":
             family = await self._family_for(query_text, results, see_prices)
+            if family is None:
+                catalog_page, catalog_filters = await self._catalog_for(query_text, see_prices)
         if not see_prices:
             results = self.withhold_prices(results)
         total = len(results)
@@ -494,6 +498,8 @@ class SearchService:
             page_size=request.page_size,
             results=page_results,
             family=family,
+            catalog=catalog_page,
+            catalog_filters=catalog_filters,
             meta=DataMeta(
                 data_mode=data_mode,
                 is_demo=is_demo,
@@ -813,6 +819,33 @@ class SearchService:
         except Exception as exc:  # the cards still answer; the family is extra
             logger.warning("Family view failed for %s: %s", line, type(exc).__name__)
             return None
+
+    async def _catalog_for(self, query_text: str, see_prices: bool):
+        """Curated models filtered by what the query asked for, when it browses
+        a category rather than naming a product."""
+        from app.services.catalog_browse import CatalogBrowser, catalog_for_query
+
+        named = catalog_for_query(query_text)
+        if named is None:
+            return None, None
+        category, filters = named
+        try:
+            page = await CatalogBrowser(self.db).page(
+                category,
+                see_prices=see_prices,
+                brands=filters.get("brands") or None,
+                ram_gb=filters.get("ram_gb"),
+                storage_gb=filters.get("storage_gb"),
+                min_price=filters.get("min_price"),
+                max_price=filters.get("max_price"),
+                sort="price_asc"
+                if (filters.get("max_price") or filters.get("min_price"))
+                else "newest",
+            )
+        except Exception as exc:  # the cards still answer; the catalogue is extra
+            logger.warning("Catalogue view failed for %r: %s", query_text, type(exc).__name__)
+            return None, None
+        return page, filters
 
     async def _catalog_fallback(self, query_text: str) -> list[ProductSearchResult]:
         from sqlalchemy import select

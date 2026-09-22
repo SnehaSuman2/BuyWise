@@ -4,7 +4,7 @@ import React, { useEffect, useState } from "react";
 import { useTheme } from "@/lib/theme";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Search, Bell, Bot, Menu, X, Moon, Sun, Sparkles, LayoutDashboard, LogOut, Crown, ShieldCheck, Smartphone, User as UserIcon } from "lucide-react";
+import { Search, Bell, Bot, Menu, X, Moon, Sun, Sparkles, LayoutDashboard, LogOut, Crown, ShieldCheck, User as UserIcon } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 
 export default function Header() {
@@ -21,7 +21,6 @@ export default function Header() {
 
   const links = [
     { href: "/", label: "Search", icon: Search },
-    { href: "/catalog/phones", label: "Phones", icon: Smartphone },
     { href: "/agent", label: "AI Agent", icon: Bot },
     { href: "/alerts", label: "Alerts", icon: Bell },
     { href: "/pricing", label: "Pro", icon: Crown },
