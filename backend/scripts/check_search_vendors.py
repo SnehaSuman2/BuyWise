@@ -23,16 +23,18 @@ from app.providers.serper.google_shopping import SerperShoppingProvider  # noqa:
 QUERY = "iphone 17 256gb"
 
 
-async def probe(provider) -> None:
-    label = f"{provider.name}:{provider.engine}"
+async def probe(provider, query: str = QUERY) -> None:
     if not provider.enabled:
-        print(f"  {label:28s} not configured")
+        print(f"  {provider.name}:{provider.engine} not configured")
         return
     try:
-        res = await provider.search_products(QUERY, max_results=10)
+        res = await provider.search_products(query, max_results=10)
     except Exception as exc:
-        print(f"  {label:28s} RAISED {type(exc).__name__}: {exc}")
+        print(f"  {provider.name}:{provider.engine} RAISED {type(exc).__name__}: {exc}")
         return
+    # Read the name only after the call: a chained provider reports whichever
+    # vendor actually answered, which is not known until it has.
+    label = f"{provider.name}:{provider.engine}"
     if not res.ok:
         print(f"  {label:28s} FAILED  {res.error}")
         return
