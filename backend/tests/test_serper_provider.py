@@ -198,3 +198,15 @@ def test_photo_search_keeps_a_fallback_vendor(monkeypatch):
     names = [f"{p.name}:{p.engine}" for p in registry.image_search_providers()]
     assert any(n.startswith("serper") for n in names), names
     assert registry.provider_status()["engines"]["serper_lens"] is True
+
+
+@pytest.mark.asyncio
+async def test_meta_says_which_search_vendors_exist_without_leaking_keys(client, monkeypatch):
+    settings = get_settings()
+    monkeypatch.setattr(settings, "SERPAPI_API_KEY", "serp-secret-value")
+    monkeypatch.setattr(settings, "SERPER_API_KEY", "serper-secret-value")
+    body = (await client.get("/api/v1/meta")).json()
+    assert body["search_vendors"] == {"serpapi": True, "searchapi": False, "serper": True}
+    import json as _json
+
+    assert "secret-value" not in _json.dumps(body), "a key must never reach /meta"

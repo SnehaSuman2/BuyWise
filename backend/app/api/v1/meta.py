@@ -20,6 +20,15 @@ async def meta():
         "ai_mode": "live" if s.ai_enabled else "demo",
         "ai_provider": "gemini" if s.gemini_enabled else ("openai" if s.openai_enabled else "demo"),
         "search_provider": s.active_search_provider if s.search_api_enabled else "demo",
+        # Which search vendors this deployment can call. Booleans only, never a
+        # key. Without this there is no way to tell from outside whether a
+        # fallback vendor is actually configured or the primary simply still
+        # had credit, which is exactly the question a deploy raises.
+        "search_vendors": {
+            "serpapi": bool(s.SERPAPI_API_KEY),
+            "searchapi": bool(s.SEARCHAPI_API_KEY),
+            "serper": s.serper_enabled,
+        },
         "payments_enabled": s.razorpay_enabled,
         # Configured is not the same as working: a regenerated or deleted key
         # is still set here but refused by Razorpay, and checkout then dies at
