@@ -1,0 +1,10 @@
+# Deploy this directory to Heroku as a container.
+#
+# The repository root holds both backend and frontend, so the backend is pushed
+# on its own with git subtree (see DEPLOY_HEROKU.md). That keeps this Dockerfile's
+# paths identical to the ones Render already builds, so both hosts stay working.
+build:
+  docker:
+    web: Dockerfile
+run:
+  web: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 2"
