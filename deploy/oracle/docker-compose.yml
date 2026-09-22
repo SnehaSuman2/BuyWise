@@ -1,0 +1,57 @@
+# BuyWise API on an Oracle Cloud Always Free ARM instance.
+#
+# Two containers: the API, and Caddy in front of it for automatic HTTPS. The
+# frontend stays on Vercel and the database stays on Neon, so this box holds no
+# state and can be rebuilt from scratch in minutes.
+#
+#   docker compose -f deploy/oracle/docker-compose.yml up -d --build
+#
+# Redis and Celery are deliberately absent: scheduled jobs run from GitHub
+# Actions against /internal/jobs, and the cache lives in Postgres.
+
+services:
+  api:
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile
+    container_name: buywise-api
+    restart: unless-stopped
+    env_file: ../../.env
+    environment:
+      ENVIRONMENT: production
+      PORT: 8000
+    # Not published to the host: only Caddy reaches it, over the internal network.
+    expose:
+      - "8000"
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
+             --proxy-headers --forwarded-allow-ips='*'"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: buywise-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      # The hostname this API answers on. Caddy gets a certificate for it
+      # automatically, which is why a bare IP will not do.
+      API_DOMAIN: ${API_DOMAIN:?set API_DOMAIN in .env, e.g. api.buywise.co.in}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+
+volumes:
+  caddy_data:
+  caddy_config:
