@@ -126,7 +126,7 @@ class OfferService:
         return list(res.items), providers, []
 
     @staticmethod
-    async def enrich_in_own_session(product_id: uuid.UUID) -> bool:
+    async def enrich_in_own_session(product_id: uuid.UUID, force: bool = False) -> bool:
         """enrich_if_thin with a session of its own, so it can outlive the request
         that started it. Used by search to time-box the wait for store lookups."""
         from app.core.database import async_session_factory
@@ -135,14 +135,47 @@ class OfferService:
             product = await catalog.load_product(session, product_id)
             if product is None:
                 return False
-            ok = await OfferService(session).enrich_if_thin(product)
+            ok = await OfferService(session).enrich_if_thin(product, force=force)
             await session.commit()
             return ok
 
-    async def enrich_if_thin(self, product: Product) -> bool:
+    @staticmethod
+    def enrichment_attempted_recently(attrs: dict, within: timedelta) -> bool:
+        """Whether a store lookup for this product started within the interval.
+
+        A lookup that fails, or is still running, must not make every later
+        search for the product wait the full time-box again.
+        """
+        raw = (attrs or {}).get("enrich_attempted_at")
+        if not raw:
+            return False
+        try:
+            attempted = datetime.fromisoformat(raw)
+        except ValueError:
+            return False
+        return datetime.now(timezone.utc) - _aware(attempted) < within
+
+    @staticmethod
+    def mark_enrichment_attempt(product: Product) -> None:
+        attrs = dict(product.attributes or {})
+        attrs["enrich_attempted_at"] = datetime.now(timezone.utc).isoformat()
+        product.attributes = attrs
+
+    def can_enrich(self, attrs: dict) -> bool:
+        """A product Google flagged that has not been enriched or tried lately."""
+        attrs = attrs or {}
+        if attrs.get("enriched_at"):
+            return False
+        if not (attrs.get("enrichment_token") or attrs.get("google_product_id")):
+            return False
+        retry_after = timedelta(seconds=self.settings.OFFER_THIN_REFRESH_SECONDS)
+        return not self.enrichment_attempted_recently(attrs, retry_after)
+
+    async def enrich_if_thin(self, product: Product, force: bool = False) -> bool:
         """First sight of a product that Google says several stores sell: fetch them.
 
-        Returns True when a refresh ran.
+        Returns True when a refresh ran. With force, a recent attempt does not
+        stop it: the search that marked the attempt is the one asking.
         """
         offers = await catalog.load_offers(self.db, product.id)
         attrs = product.attributes or {}
@@ -150,6 +183,9 @@ class OfferService:
             return False
         if not (attrs.get("enrichment_token") or attrs.get("google_product_id")):
             return False
+        if not force and not self.can_enrich(attrs):
+            return False
+        self.mark_enrichment_attempt(product)
         try:
             await self.refresh_offers(product)
         except Exception as exc:  # never let enrichment break a page
@@ -189,9 +225,7 @@ class OfferService:
         # A thin product Google flagged as sold by several stores is enriched on its
         # first view; other thin products wait for the interval so a page view cannot
         # spend vendor calls on something with nothing more to find.
-        can_enrich_now = not attrs.get("enriched_at") and bool(
-            attrs.get("enrichment_token") or attrs.get("google_product_id")
-        )
+        can_enrich_now = self.can_enrich(attrs)
         is_thin = len(offers) < 2 and (age is None or age > thin_after or can_enrich_now)
         if refresh or ((is_stale or is_thin) and not (self.settings.demo_mode and offers)):
             try:

@@ -222,9 +222,11 @@ class Cache:
 
     async def set_json(self, key: str, value: Any, ttl: int) -> None:
         payload = json.dumps(value, default=str)
-        # Keep the in-process copy short-lived so a value evicted or refreshed
-        # elsewhere is picked up within minutes by every worker.
-        await self._memory.set(key, payload, min(ttl, 300))
+        # The in-process copy lives up to an hour: provider responses run to a
+        # few hundred kilobytes, and reading them back from the database is a
+        # measurable part of a repeat search. Values evicted or refreshed elsewhere
+        # reach every worker within that hour.
+        await self._memory.set(key, payload, min(ttl, 3600))
         backend = await self._backend()
         if backend is self._memory:
             await self._memory.set(key, payload, ttl)

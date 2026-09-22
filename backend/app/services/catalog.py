@@ -9,7 +9,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from sqlalchemy import delete, or_, select
+from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -61,6 +61,11 @@ class PersistCache:
     # until the session flushes, so these are written by flush_pending() after one
     # flush for all new offers, instead of one flush per offer.
     pending_history: list[tuple[Offer, dict]] = field(default_factory=list)
+    # Retailer slugs and (retailer, seller name) pairs already looked up for this
+    # request, found or not. A miss here is a row that does not exist, so it is
+    # created without asking the database again.
+    known_retailer_slugs: set[str] = field(default_factory=set)
+    known_sellers: set[tuple[uuid.UUID, str]] = field(default_factory=set)
 
 
 async def preload_for_products(
@@ -140,10 +145,44 @@ async def get_or_create_retailer(
     )
     if cache is not None and cache_key in cache.retailers:
         return cache.retailers[cache_key]
+    if cache is not None and cache_key in cache.known_retailer_slugs:
+        # Preloaded and absent: create it without another round trip. The id is
+        # client-generated, so offers can reference it before any flush.
+        retailer = _new_retailer(name, domain, is_demo, curated)
+        db.add(retailer)
+        cache.retailers[cache_key] = retailer
+        return retailer
     retailer = await _get_or_create_retailer(db, name, domain, is_demo, curated)
     if cache is not None:
         cache.retailers[cache_key] = retailer
     return retailer
+
+
+def _new_retailer(name: str | None, domain: str | None, is_demo: bool, curated) -> Retailer:
+    if curated:
+        return Retailer(
+            id=uuid.uuid4(),
+            name=curated["name"],
+            slug=curated["slug"],
+            domain=curated["domain"],
+            website_url=curated.get("website_url"),
+            is_marketplace=curated.get("is_marketplace", False),
+            is_curated=True,
+            policies=curated.get("policies", {}),
+            is_demo=False,
+        )
+    display = (name or domain or "Unknown retailer").strip()
+    return Retailer(
+        id=uuid.uuid4(),
+        name=display[:200],
+        slug=slugify(domain or display),
+        domain=domain,
+        website_url=f"https://{domain}" if domain else None,
+        is_marketplace=False,
+        is_curated=False,
+        policies={},
+        is_demo=is_demo,
+    )
 
 
 async def _get_or_create_retailer(
@@ -205,19 +244,24 @@ async def get_or_create_seller(
     name = name.strip()[:300]
     if cache is not None and (retailer.id, name) in cache.sellers:
         return cache.sellers[(retailer.id, name)]
-    result = await db.execute(
-        select(Seller).where(Seller.retailer_id == retailer.id, Seller.name == name)
-    )
-    seller = result.scalar_one_or_none()
+    known_absent = cache is not None and (retailer.id, name) in cache.known_sellers
+    seller = None
+    if not known_absent:
+        result = await db.execute(
+            select(Seller).where(Seller.retailer_id == retailer.id, Seller.name == name)
+        )
+        seller = result.scalar_one_or_none()
     if seller is None:
         seller = Seller(
+            id=uuid.uuid4(),
             retailer_id=retailer.id,
             name=name,
             source_provider=listing.source_provider if listing else None,
             is_demo=bool(listing and listing.is_demo),
         )
         db.add(seller)
-        await db.flush()
+        if cache is None:
+            await db.flush()
     if cache is not None:
         cache.sellers[(retailer.id, name)] = seller
     return seller
@@ -250,6 +294,14 @@ class Prefetched:
     by_key: dict[str, Product] = field(default_factory=dict)
     by_ident: dict[tuple[str, str], Product] = field(default_factory=dict)
 
+    def remember(self, product: Product, key: str, identifiers: dict) -> None:
+        """A product created for this batch; later groups with its key reuse it."""
+        self.by_key[key] = product
+        for kind in ("gtin", "asin", "mpn"):
+            val = identifiers.get(kind)
+            if val:
+                self.by_ident.setdefault((kind, val), product)
+
     def find(self, key: str, identifiers: dict) -> Product | None:
         if key in self.by_key:
             return self.by_key[key]
@@ -271,8 +323,6 @@ async def prefetch_products(db: AsyncSession, wanted: list[tuple[str, dict]]) ->
         (kind, ids[kind]) for _, ids in wanted for kind in ("gtin", "asin", "mpn") if ids.get(kind)
     }
     if idents:
-        from sqlalchemy import or_
-
         clauses = []
         for kind in ("gtin", "asin", "mpn"):
             values = [v for k, v in idents if k == kind]
@@ -301,6 +351,7 @@ async def preload_retailers(db: AsyncSession, listings, cache: PersistCache) -> 
         )
         slugs.setdefault(slug, curated)
     missing = [slug for slug in slugs if slug not in cache.retailers]
+    cache.known_retailer_slugs.update(missing)
     if not missing:
         return
     rows = (await db.execute(select(Retailer).where(Retailer.slug.in_(missing)))).scalars()
@@ -312,6 +363,43 @@ async def preload_retailers(db: AsyncSession, listings, cache: PersistCache) -> 
             if retailer.policies != curated.get("policies", {}):
                 retailer.policies = curated.get("policies", {})
         cache.retailers[retailer.slug] = retailer
+
+
+async def preload_sellers(db: AsyncSession, listings, cache: PersistCache) -> None:
+    """Load every seller a batch of listings names, in one query.
+
+    Runs after preload_retailers: a seller belongs to a retailer, and a retailer
+    that does not exist yet has no sellers to load.
+    """
+    wanted: set[tuple[uuid.UUID, str]] = set()
+    for listing in listings:
+        if not listing.seller_name:
+            continue
+        curated = resolve_retailer(listing.retailer_name, listing.retailer_domain)
+        slug = (
+            curated["slug"]
+            if curated
+            else slugify(
+                listing.retailer_domain or (listing.retailer_name or "Unknown retailer").strip()
+            )
+        )
+        retailer = cache.retailers.get(slug)
+        if retailer is not None:
+            wanted.add((retailer.id, listing.seller_name.strip()[:300]))
+    wanted -= set(cache.sellers)
+    cache.known_sellers.update(wanted)
+    if not wanted:
+        return
+    retailer_ids = {rid for rid, _ in wanted}
+    names = {name for _, name in wanted}
+    rows = (
+        await db.execute(
+            select(Seller).where(Seller.retailer_id.in_(retailer_ids), Seller.name.in_(names))
+        )
+    ).scalars()
+    for seller in rows:
+        if (seller.retailer_id, seller.name) in wanted:
+            cache.sellers[(seller.retailer_id, seller.name)] = seller
 
 
 async def find_product_by_identifiers(
@@ -344,7 +432,15 @@ async def upsert_product(
     condition: str = "new",
     extra_attributes: dict | None = None,
     prefetched: Prefetched | None = None,
+    defer_create: bool = False,
 ) -> Product:
+    """Find or create the product a listing group belongs to.
+
+    With defer_create, the prefetched batch is the only lookup and a new product
+    is added to the session without flushing: the caller flushes the whole batch
+    once, inside a savepoint, and retries one product at a time if another
+    request inserted one of them first.
+    """
     identifiers = clean_identifiers(identifiers)
     attrs = attrs or extract_attributes(title, specifications, brand)
     key, identifiers = product_key_for(attrs, identifiers, condition)
@@ -352,7 +448,7 @@ async def upsert_product(
     async def _find_existing() -> Product | None:
         if prefetched is not None:
             found = prefetched.find(key, identifiers)
-            if found is not None:
+            if found is not None or defer_create:
                 return found
         result = await db.execute(select(Product).where(Product.canonical_key == key))
         found = result.scalar_one_or_none()
@@ -360,51 +456,64 @@ async def upsert_product(
             found = await find_product_by_identifiers(db, identifiers)
         return found
 
+    def _new_product() -> Product:
+        return Product(
+            id=uuid.uuid4(),
+            name=title[:500],
+            brand=(brand or (attrs.brand.title() if attrs.brand else None)),
+            model=attrs.model,
+            category=category,
+            description=description,
+            gtin=identifiers.get("gtin"),
+            sku=identifiers.get("sku"),
+            mpn=identifiers.get("mpn"),
+            asin=identifiers.get("asin"),
+            attributes=attrs.as_dict(),
+            specifications=specifications or {},
+            images=[image_url] if image_url else [],
+            normalized_name=attrs.clean_title[:500],
+            canonical_key=key,
+            source_provider=source_provider,
+            source_url=source_url,
+            is_demo=is_demo,
+        )
+
+    def _new_variant(product: Product) -> ProductVariant:
+        return ProductVariant(
+            id=uuid.uuid4(),
+            product_id=product.id,
+            name=title[:500],
+            storage=attrs.storage,
+            ram=attrs.ram,
+            color=attrs.color,
+            size=attrs.size,
+            gtin=identifiers.get("gtin"),
+            asin=identifiers.get("asin"),
+            mpn=identifiers.get("mpn"),
+            sku=identifiers.get("sku"),
+            canonical_key=f"v:{key}",
+            additional_specs={},
+        )
+
     product = await _find_existing()
     created = False
-    if product is None:
+    if product is None and defer_create and prefetched is not None:
+        product = _new_product()
+        product.variants = [_new_variant(product)]
+        db.add(product)
+        prefetched.remember(product, key, identifiers)
+        created = True
+    elif product is None:
         # Two concurrent requests (e.g. a duplicate double-fetch, or two users searching
         # the same brand-new product at once) can race to insert the same canonical_key.
         # Insert inside a SAVEPOINT so a unique-constraint conflict only rolls back this
         # attempt rather than the whole request, then fall back to whichever row won.
         try:
             async with db.begin_nested():
-                product = Product(
-                    name=title[:500],
-                    brand=(brand or (attrs.brand.title() if attrs.brand else None)),
-                    model=attrs.model,
-                    category=category,
-                    description=description,
-                    gtin=identifiers.get("gtin"),
-                    sku=identifiers.get("sku"),
-                    mpn=identifiers.get("mpn"),
-                    asin=identifiers.get("asin"),
-                    attributes=attrs.as_dict(),
-                    specifications=specifications or {},
-                    images=[image_url] if image_url else [],
-                    normalized_name=attrs.clean_title[:500],
-                    canonical_key=key,
-                    source_provider=source_provider,
-                    source_url=source_url,
-                    is_demo=is_demo,
-                )
+                product = _new_product()
                 db.add(product)
                 await db.flush()
-                variant = ProductVariant(
-                    product_id=product.id,
-                    name=title[:500],
-                    storage=attrs.storage,
-                    ram=attrs.ram,
-                    color=attrs.color,
-                    size=attrs.size,
-                    gtin=identifiers.get("gtin"),
-                    asin=identifiers.get("asin"),
-                    mpn=identifiers.get("mpn"),
-                    sku=identifiers.get("sku"),
-                    canonical_key=f"v:{key}",
-                    additional_specs={},
-                )
-                db.add(variant)
+                db.add(_new_variant(product))
                 await db.flush()
             created = True
         except IntegrityError:
@@ -615,6 +724,25 @@ def retire_implausible_offers(product: Product, offers: list[Offer]) -> Retireme
         else:
             kept.append(offer)
     return Retirement(kept, retired, floor)
+
+
+async def purge_implausible_history_many(
+    db: AsyncSession, items: list[tuple[Product, Retirement]]
+) -> int:
+    """purge_implausible_history for many products in one statement."""
+    clauses = []
+    for product, retirement in items:
+        conditions = []
+        if retirement.retired:
+            conditions.append(PriceHistory.offer_id.in_([o.id for o in retirement.retired]))
+        if retirement.floor is not None:
+            conditions.append(PriceHistory.estimated_final_price < retirement.floor)
+        if conditions:
+            clauses.append(and_(PriceHistory.product_id == product.id, or_(*conditions)))
+    if not clauses:
+        return 0
+    result = await db.execute(delete(PriceHistory).where(or_(*clauses)))
+    return int(result.rowcount or 0)
 
 
 async def purge_implausible_history(

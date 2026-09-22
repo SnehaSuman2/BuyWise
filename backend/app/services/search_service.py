@@ -17,6 +17,7 @@ import uuid
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -654,6 +655,8 @@ class SearchService:
             return results
         candidates = []
         snapshot = getattr(self, "_persisted_attrs", {})
+        products = getattr(self, "_persisted_products", {})
+        offer_service = OfferService(self.db)
         for r in results:
             if len(candidates) >= limit:
                 break
@@ -663,10 +666,17 @@ class SearchService:
             if attrs is None:
                 product = await catalog.load_product(self.db, r.id)
                 attrs = (product.attributes if product else None) or {}
-            if attrs.get("multiple_sources") and not attrs.get("enriched_at"):
+            if attrs.get("multiple_sources") and offer_service.can_enrich(attrs):
                 candidates.append((r, r.id))
         if not candidates:
             return results
+        # Mark the attempt before committing: the lookups run whether or not this
+        # search waits for them, and the next search for these products must not
+        # wait the whole time-box again for a lookup that is slow or failing.
+        for _, pid in candidates:
+            product = products.get(pid) or await catalog.load_product(self.db, pid)
+            if product is not None:
+                OfferService.mark_enrichment_attempt(product)
         # Each lookup runs in its own session so it can finish after this request
         # has answered. The search waits a few seconds for whatever completes and
         # merges that; the rest lands on the product page when it is opened.
@@ -675,7 +685,7 @@ class SearchService:
         pending_ids = list(candidates)
         await self.db.commit()
         tasks = {
-            asyncio.create_task(OfferService.enrich_in_own_session(pid)): r
+            asyncio.create_task(OfferService.enrich_in_own_session(pid, force=True)): r
             for r, pid in pending_ids
         }
         BACKGROUND_TASKS.update(tasks)
@@ -811,10 +821,8 @@ class SearchService:
         query_type: str,
         reference_product: Product | None = None,
     ) -> list[ProductSearchResult]:
-        results: list[ProductSearchResult] = []
         seen: dict[uuid.UUID, ListingGroup] = {}
         cache = catalog.PersistCache()
-        planned: list[tuple[ListingGroup, Product, bool]] = []
         groups = groups[:24]
 
         # Everything this batch might already have, in a handful of queries: the
@@ -836,10 +844,43 @@ class SearchService:
                 )
             )
         prefetched = await catalog.prefetch_products(self.db, wanted)
-        await catalog.preload_retailers(
-            self.db, [listing for group in groups for listing, _ in group.listings], cache
-        )
+        listings_flat = [listing for group in groups for listing, _ in group.listings]
+        await catalog.preload_retailers(self.db, listings_flat, cache)
+        await catalog.preload_sellers(self.db, listings_flat, cache)
 
+        # New products are added without flushing and written in one statement
+        # inside a savepoint. If another request inserted one of them meanwhile,
+        # the savepoint rolls back and the batch is redone one product at a time,
+        # which finds whichever row won.
+        try:
+            async with self.db.begin_nested():
+                planned = await self._upsert_groups(
+                    groups, group_identifiers, reference_product, prefetched, deferred=True
+                )
+                await self.db.flush()
+        except IntegrityError:
+            logger.info("Product batch conflicted with a concurrent insert; retrying singly")
+            prefetched = await catalog.prefetch_products(self.db, wanted)
+            planned = await self._upsert_groups(
+                groups, group_identifiers, reference_product, prefetched, deferred=False
+            )
+        # Snapshots for the enrichment step: after the commit it triggers, these
+        # instances are expired and cannot be read without a lazy refresh.
+        self._persisted_attrs = {p.id: dict(p.attributes or {}) for _, p, _ in planned}
+        self._persisted_products = {p.id: p for _, p, _ in planned}
+        await self._record_offers(planned, cache, seen)
+        return await self._results_for(seen)
+
+    async def _upsert_groups(
+        self,
+        groups: list[ListingGroup],
+        group_identifiers: dict[int, dict],
+        reference_product: Product | None,
+        prefetched: catalog.Prefetched,
+        *,
+        deferred: bool,
+    ) -> list[tuple[ListingGroup, Product, bool]]:
+        planned: list[tuple[ListingGroup, Product, bool]] = []
         for group in groups:
             ref_listing = group.listings[0][0]
             identifiers = group_identifiers[id(group)]
@@ -870,6 +911,7 @@ class SearchService:
                     is_demo=all(l.is_demo for l, _ in group.listings),
                     condition=ref_listing.condition or "new",
                     prefetched=prefetched,
+                    defer_create=deferred,
                     extra_attributes={
                         "multiple_sources": any(l.multiple_sources for l, _ in group.listings),
                         "enrichment_token": next(
@@ -881,10 +923,14 @@ class SearchService:
                 )
             group.product = product
             planned.append((group, product, attached))
-        # A snapshot for the enrichment step: after the commit it triggers, these
-        # instances are expired and cannot be read without a lazy refresh.
-        self._persisted_attrs = {p.id: dict(p.attributes or {}) for _, p, _ in planned}
+        return planned
 
+    async def _record_offers(
+        self,
+        planned: list[tuple[ListingGroup, Product, bool]],
+        cache: catalog.PersistCache,
+        seen: dict[uuid.UUID, ListingGroup],
+    ) -> None:
         # Every product's variant and existing offers in two queries, then the
         # offers themselves with one flush for all of them and one for their price
         # observations. This was one to four queries per listing before, and at
@@ -911,11 +957,13 @@ class SearchService:
                 seen[product.id] = group
         await catalog.flush_pending(self.db, cache)
 
+    async def _results_for(self, seen: dict[uuid.UUID, ListingGroup]) -> list[ProductSearchResult]:
         # Build results only after every group is persisted, so offer counts and price
         # ranges reflect all offers rather than however many existed mid-loop. Offers
         # recorded before today's filters existed are retired here if implausible.
+        results: list[ProductSearchResult] = []
         offers_by_product = await catalog.load_offers_many(self.db, set(seen))
-        retired_any = False
+        to_purge: list[tuple[Product, catalog.Retirement]] = []
         for product_id, group in seen.items():
             product = group.product  # created or loaded above in this same session
             if product is None:
@@ -923,13 +971,14 @@ class SearchService:
             offers = offers_by_product.get(product_id, [])
             retirement = catalog.retire_implausible_offers(product, offers)
             if retirement.retired or retirement.floor is not None:
-                purged = await catalog.purge_implausible_history(self.db, product, retirement)
-                retired_any = retired_any or bool(retirement.retired) or purged > 0
+                to_purge.append((product, retirement))
             results.append(
                 await self._result_for_product(product, group, offers=retirement.remaining)
             )
-        if retired_any:
-            await self.db.flush()
+        if to_purge:
+            purged = await catalog.purge_implausible_history_many(self.db, to_purge)
+            if purged or any(r.retired for _, r in to_purge):
+                await self.db.flush()
         return results
 
     async def _result_for_product(
