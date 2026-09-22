@@ -108,7 +108,9 @@ async def test_photo_search_fans_out_and_never_claims_exact(client, monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_single_offer_product_fetches_a_comparison_on_its_page(client, db, monkeypatch):
+async def test_single_offer_product_fetches_a_comparison_on_its_page(
+    client, db, admin_headers, monkeypatch
+):
     from app.core.config import get_settings
 
     # Demo mode never refreshes stored offers; production has a vendor key.
@@ -125,7 +127,9 @@ async def test_single_offer_product_fetches_a_comparison_on_its_page(client, db,
     # Fresh single offer: the page must not spend a vendor call yet.
     fresh = FakeSearch([_listing(KURTA, "Myntra", "myntra.com", 749)])
     monkeypatch.setattr(registry, "product_search_providers", lambda: [fresh])
-    assert (await client.get(f"/api/v1/products/{product_id}/offers")).status_code == 200
+    assert (
+        await client.get(f"/api/v1/products/{product_id}/offers", headers=admin_headers)
+    ).status_code == 200
     assert fresh.queries == []
 
     # Forty-five minutes later, one offer is still not a comparison: refresh.
@@ -144,7 +148,7 @@ async def test_single_offer_product_fetches_a_comparison_on_its_page(client, db,
         ]
     )
     monkeypatch.setattr(registry, "product_search_providers", lambda: [later])
-    page = await client.get(f"/api/v1/products/{product_id}/offers")
+    page = await client.get(f"/api/v1/products/{product_id}/offers", headers=admin_headers)
     assert page.status_code == 200
     assert later.queries and len(later.queries[0].split()) <= 9, later.queries
     retailers = {o["retailer"]["name"] for o in page.json()["offers"]}

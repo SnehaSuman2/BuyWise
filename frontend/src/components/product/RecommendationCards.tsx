@@ -1,8 +1,10 @@
 import { ExternalLink, ShieldCheck } from "lucide-react";
 import { formatPrice, getTrustColor, getRecCategoryColor, getRecCategoryLabel, priceStatusLabel } from "@/lib/utils";
 import type { Recommendation } from "@/lib/types";
+import LockedPanel from "@/components/product/LockedPanel";
 
-export default function RecommendationCards({ recommendations }: { recommendations: Recommendation[] }) {
+export default function RecommendationCards({ recommendations, locked = false }: { recommendations: Recommendation[]; locked?: boolean }) {
+  if (locked) return <LockedPanel what="the shopping decision" />;
   if (!recommendations.length) return <p className="text-sm text-muted-foreground">No exact-match offers available to recommend yet.</p>;
   const distinctOffers = new Set(recommendations.map((r) => r.offer_id)).size;
   if (distinctOffers === 1) {

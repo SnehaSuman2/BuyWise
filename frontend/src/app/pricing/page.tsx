@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Crown, Check, AlertTriangle, Smartphone, ShieldCheck } from "lucide-react";
+import { Crown, Check, AlertTriangle, QrCode, ShieldCheck } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useMeta } from "@/lib/meta";
@@ -93,7 +93,7 @@ export default function PricingPage() {
         <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-amber-500/10 text-amber-600 text-sm font-medium mb-4"><Crown className="w-4 h-4" /> BuyWise Pro</div>
         <h1 className="text-3xl font-bold mb-3">More tracking. Deeper insight. Same honest data.</h1>
         <p className="text-muted-foreground max-w-2xl mx-auto">Pro pays for the data and compute behind BuyWise. It never changes Trust Scores or rankings.</p>
-        <p className="text-sm text-muted-foreground mt-3 inline-flex items-center gap-2"><Smartphone className="w-4 h-4 text-indigo-500" /> Pay by UPI, card or netbanking. No auto-renewal: a plan simply ends unless you buy another.</p>
+        <p className="text-sm text-muted-foreground mt-3 inline-flex items-center gap-2"><QrCode className="w-4 h-4 text-indigo-500" /> Pay by UPI, card or netbanking. No auto-renewal: a plan simply ends unless you buy another.</p>
       </div>
 
       {meta && !meta.payments_enabled && <p className="mb-6 text-sm text-amber-600 flex items-center justify-center gap-2"><AlertTriangle className="w-4 h-4" /> Payments are not configured on this deployment yet (Razorpay keys missing). Plans are shown for reference.</p>}
@@ -127,7 +127,7 @@ export default function PricingPage() {
 
               {p.id === "free" ? <div className="text-center text-sm text-muted-foreground py-2.5">{current ? "Current plan" : "Included"}</div> : (
                 <button onClick={() => checkout(p.id)} disabled={busy === p.id || current || (meta ? !meta.payments_enabled : false)} className={`w-full py-2.5 rounded-xl font-medium flex items-center justify-center gap-2 disabled:opacity-50 transition-colors ${highlight ? "gradient-primary text-white" : "glass hover:bg-muted/50"}`}>
-                  <Smartphone className="w-4 h-4" />
+                  <QrCode className="w-4 h-4" />
                   {current ? "Current plan" : busy === p.id ? "Opening checkout…" : user ? "Pay by UPI or card" : "Sign in to subscribe"}
                 </button>
               )}

@@ -36,6 +36,7 @@ class RecommendationSet(BaseModel):
     product_id: UUID
     product_name: str
     recommendations: list[Recommendation] = []
+    locked: bool = False  # picks are part of Pro; see OfferComparison.locked
     ai_explanation: str | None = None
     ai_provider: str | None = None
     meta: DataMeta

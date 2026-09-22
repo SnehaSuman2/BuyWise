@@ -395,9 +395,18 @@ class ShoppingAgent:
         return trust.model_dump(mode="json") if trust else None
 
     async def process(
-        self, query: str, user_id: uuid.UUID | None = None, product_id: uuid.UUID | None = None
+        self,
+        query: str,
+        user_id: uuid.UUID | None = None,
+        product_id: uuid.UUID | None = None,
+        user=None,
     ) -> AgentResponse:
+        from app.services.subscription_service import entitlements_for
+
         intent = await self.extract_intent(query)
+        # The picks are the comparison distilled, and the comparison is part of
+        # Pro. Without it the agent still finds the product and its lowest price.
+        full = (await entitlements_for(self.db, user)).compare_offers
         products: list[AgentProductResult] = []
         trust_payload = None
         price_signal = None
@@ -463,8 +472,13 @@ class ShoppingAgent:
             is_demo = is_demo or result.meta.is_demo
             top = result.results[: (1 if intent.kind == "compare" else 3)]
             for item in top:
-                rec = await self.recommender.generate(item.id, with_ai=False)
+                rec = await self.recommender.generate(item.id, with_ai=False, full=full)
                 products.append(AgentProductResult(product=item, recommendations=rec))
+            if top and not full:
+                warnings.append(
+                    "Retailer-by-retailer comparison and picks are part of BuyWise Pro; "
+                    "showing the lowest price only."
+                )
             if intent.kind in ("buy_timing", "where_to_buy") and top:
                 history = await self.recommender.history.get_history(top[0].id, 90)
                 price_signal = history.signal.model_dump() if history else None
@@ -606,6 +620,17 @@ class ShoppingAgent:
                 lines.append(
                     f"For {first.product.name}, the best place right now is {best.retailer_name} "
                     f"at ₹{best.price:,.0f} ({trust_text}). {best.reason}"
+                )
+            elif first.product.lowest_price:
+                where = (
+                    f" across {len(first.product.retailers)} retailers"
+                    if len(first.product.retailers) > 1
+                    else ""
+                )
+                lines.append(
+                    f"For {first.product.name}, the lowest price BuyWise found is "
+                    f"₹{first.product.lowest_price:,.0f}{where}. The retailer-by-retailer "
+                    f"comparison and the best-place pick are part of BuyWise Pro."
                 )
         if products:
             lines.append(

@@ -113,11 +113,23 @@ class RecommendationEngine:
             return None, llm.name
 
     async def generate(
-        self, product_id: uuid.UUID, *, with_ai: bool = True
+        self, product_id: uuid.UUID, *, with_ai: bool = True, full: bool = True
     ) -> RecommendationSet | None:
         comparison = await self.offers.compare(product_id)
         if comparison is None:
             return None
+        if not full:
+            # The picks are the comparison distilled; they are part of Pro too. The
+            # ranking is not even computed for the response, so nothing leaks.
+            return RecommendationSet(
+                product_id=product_id,
+                product_name=comparison.product_name,
+                recommendations=[],
+                locked=True,
+                ai_explanation=None,
+                ai_provider="none",
+                meta=comparison.meta,
+            )
         history = await self.history.get_history(product_id, 90)
         recs = self.build(comparison, history)
         explanation, provider = (

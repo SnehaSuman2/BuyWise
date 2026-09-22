@@ -71,11 +71,9 @@ class AccountService:
         ).scalar_one_or_none()
         if product is None:
             raise HTTPException(status_code=404, detail="Product not found")
-        limit = (
-            self.settings.PRO_MAX_SAVED_PRODUCTS
-            if user.plan == "pro"
-            else self.settings.FREE_MAX_SAVED_PRODUCTS
-        )
+        from app.services.subscription_service import entitlements_for
+
+        limit = (await entitlements_for(self.db, user)).saved_products
         existing = (
             await self.db.execute(
                 select(SavedProduct).where(

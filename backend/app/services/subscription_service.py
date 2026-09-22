@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
@@ -39,15 +40,84 @@ def _aware(dt: datetime | None) -> datetime | None:
     return dt if dt is None or dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
+@dataclass(frozen=True)
+class Entitlements:
+    """What a plan lets someone do. One place, used by every limit check."""
+
+    plan: str
+    alerts: int
+    saved_products: int
+    history_days: int
+    compare_offers: bool  # the retailer-by-retailer comparison and the picks
+
+    def as_limits(self) -> dict:
+        return {
+            "alerts": self.alerts,
+            "saved_products": self.saved_products,
+            "history_days": self.history_days,
+        }
+
+    def as_features(self) -> dict:
+        return {"compare_offers": self.compare_offers}
+
+
+def tier(plan_id: str) -> Entitlements:
+    s = get_settings()
+    tiers = {
+        "free": Entitlements(
+            "free", s.FREE_MAX_ALERTS, s.FREE_MAX_SAVED_PRODUCTS, s.FREE_HISTORY_DAYS, False
+        ),
+        "pro_monthly": Entitlements(
+            "pro_monthly",
+            s.PRO_MONTHLY_MAX_ALERTS,
+            s.PRO_MONTHLY_MAX_SAVED_PRODUCTS,
+            s.PRO_MONTHLY_HISTORY_DAYS,
+            True,
+        ),
+        "pro_6month": Entitlements(
+            "pro_6month",
+            s.PRO_6MONTH_MAX_ALERTS,
+            s.PRO_6MONTH_MAX_SAVED_PRODUCTS,
+            s.PRO_6MONTH_HISTORY_DAYS,
+            True,
+        ),
+        "pro_yearly": Entitlements(
+            "pro_yearly", s.PRO_MAX_ALERTS, s.PRO_MAX_SAVED_PRODUCTS, s.PRO_HISTORY_DAYS, True
+        ),
+    }
+    return tiers.get(plan_id, tiers["free"])
+
+
+async def entitlements_for(db: AsyncSession, user: User | None) -> Entitlements:
+    """The entitlements of whoever is asking. Anonymous visitors get the free tier.
+
+    Admins get the top tier: the people running BuyWise need to see the product
+    whole without buying it from themselves.
+    """
+    if user is None:
+        return tier("free")
+    if user.role == "admin":
+        return tier("pro_yearly")
+    if user.plan != "pro":
+        return tier("free")
+    sub = await SubscriptionService(db).active_subscription(user.id)
+    return tier(sub.plan) if sub else tier("free")
+
+
 def plans() -> list[PlanInfo]:
     s = get_settings()
-    features_pro = [
-        f"Up to {s.PRO_MAX_ALERTS} price alerts",
-        f"Up to {s.PRO_MAX_SAVED_PRODUCTS} saved products",
-        f"{s.PRO_HISTORY_DAYS}-day price history",
-        "Deeper trust reports with evidence",
-        "Priority AI shopping agent",
-    ]
+
+    def tier_features(t: Entitlements) -> list[str]:
+        return [
+            f"Up to {t.alerts} price alert{'s' if t.alerts != 1 else ''}",
+            f"Up to {t.saved_products} saved products",
+            f"{t.history_days}-day price history",
+            "Full retailer-by-retailer price comparison",
+            "Best overall, cheapest and safest picks",
+            "Deeper trust reports with evidence",
+            "AI shopping agent with full comparison",
+        ]
+
     monthly = s.PRO_MONTHLY_PRICE_INR
 
     def per_month(price: int, days: int) -> float:
@@ -70,6 +140,7 @@ def plans() -> list[PlanInfo]:
     ]
     best = max(paid, key=lambda plan: saving(plan[2], plan[3]))[0]
 
+    free = tier("free")
     return [
         PlanInfo(
             id="free",
@@ -77,10 +148,12 @@ def plans() -> list[PlanInfo]:
             price_inr=0,
             period_days=0,
             features=[
-                f"Up to {s.FREE_MAX_ALERTS} price alerts",
-                f"Up to {s.FREE_MAX_SAVED_PRODUCTS} saved products",
-                f"{s.FREE_HISTORY_DAYS}-day price history",
-                "AI shopping agent",
+                "Search by name, link or photo",
+                "Lowest price for every product",
+                f"{free.alerts} price alert",
+                f"Up to {free.saved_products} saved products",
+                f"{free.history_days}-day price history",
+                "AI shopping agent (lowest price only)",
             ],
         ),
         *[
@@ -90,9 +163,10 @@ def plans() -> list[PlanInfo]:
                 price_inr=price,
                 period_days=days,
                 features=(
-                    features_pro
+                    tier_features(tier(plan_id))
                     if days == 30
-                    else features_pro + [f"Saves {saving(price, days)}% against paying monthly"]
+                    else tier_features(tier(plan_id))
+                    + [f"Saves {saving(price, days)}% against paying monthly"]
                 ),
                 monthly_equivalent_inr=per_month(price, days),
                 savings_percent=saving(price, days) or None,
@@ -162,18 +236,16 @@ class SubscriptionService:
             )
         ).scalar_one()
         pro = user.plan == "pro"
+        ent = tier("pro_yearly") if user.role == "admin" else tier(sub.plan if sub else "free")
         return SubscriptionResponse(
             plan=sub.plan if sub else "free",
             status=sub.status if sub else "none",
             is_pro=pro,
             current_period_end=sub.current_period_end if sub else None,
             cancel_at_period_end=sub.cancel_at_period_end if sub else False,
-            limits={
-                "alerts": s.PRO_MAX_ALERTS if pro else s.FREE_MAX_ALERTS,
-                "saved_products": s.PRO_MAX_SAVED_PRODUCTS if pro else s.FREE_MAX_SAVED_PRODUCTS,
-                "history_days": s.PRO_HISTORY_DAYS if pro else s.FREE_HISTORY_DAYS,
-            },
+            limits=ent.as_limits(),
             usage={"alerts": alerts, "saved_products": saved},
+            features=ent.as_features(),
             payments_enabled=s.razorpay_enabled,
         )
 

@@ -1,13 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Star, TrendingDown, TrendingUp, Minus, Award, IndianRupee, Shield, Sparkles, Info, ThumbsUp, ThumbsDown, MessagesSquare } from "lucide-react";
+import { Star, TrendingDown, TrendingUp, Minus, Shield, ThumbsUp, ThumbsDown, MessagesSquare } from "lucide-react";
 import { serverGet } from "@/lib/api";
-import { formatPrice, getPriceActionColor, priceActionLabel, priceStatusLabel, getTrustColor, riskLabel } from "@/lib/utils";
+import { formatPrice, getPriceActionColor, priceActionLabel } from "@/lib/utils";
 import DataBadge from "@/components/ui/DataBadge";
-import SafeText from "@/components/ui/SafeText";
-import OffersTable from "@/components/product/OffersTable";
-import RecommendationCards from "@/components/product/RecommendationCards";
+import ComparisonSections from "@/components/product/ComparisonSections";
 import PriceHistoryChart from "@/components/product/PriceHistoryChart";
 import ProductActions from "@/components/product/ProductActions";
 import TrustScoreCard from "@/components/trust/TrustScoreCard";
@@ -42,9 +40,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
   ]);
   if (!product) notFound();
 
-  const best = recs?.recommendations.find((r) => r.category === "BEST_OVERALL") ?? null;
   const signal = history?.signal ?? null;
-  const bestTrust = best ? trusts?.find((t) => t.retailer_id === best.retailer_id) ?? null : null;
   const lowest = offers?.lowest_final_price ?? product.lowest_price ?? null;
   const SignalIcon = signal?.action === "BUY_NOW" ? TrendingDown : signal?.action === "WAIT" ? TrendingUp : Minus;
 
@@ -75,26 +71,6 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
           <div className="text-4xl font-bold mb-1 tabular-nums">{lowest ? formatPrice(lowest) : "No price yet"}</div>
           <p className="text-muted-foreground text-sm mb-5">Lowest estimated final price across exact matches{product.highest_price && lowest && product.highest_price > lowest ? ` · up to ${formatPrice(product.highest_price)} elsewhere` : ""}</p>
 
-          {best && (
-            <div className="glass rounded-2xl p-4 mb-4 grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div>
-                <div className="text-[11px] font-semibold text-indigo-500 uppercase tracking-wide mb-1 flex items-center gap-1"><Award className="w-3 h-3" /> Best overall</div>
-                <div className="font-semibold">{best.retailer_name}</div>
-                <div className="text-xl font-bold tabular-nums">{formatPrice(best.price)}</div>
-              </div>
-              <div>
-                <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-1 flex items-center gap-1"><Shield className="w-3 h-3" /> Trust Score</div>
-                <div className={`text-xl font-bold ${getTrustColor(best.trust_score)}`}>{typeof best.trust_score === "number" ? `${best.trust_score}/100` : "—"}</div>
-                <div className="text-xs text-muted-foreground">{riskLabel(best.trust_risk)}{bestTrust ? ` · ${bestTrust.confidence_level} confidence` : ""}</div>
-              </div>
-              <div>
-                <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-1 flex items-center gap-1"><IndianRupee className="w-3 h-3" /> Price status</div>
-                <div className={`text-xl font-bold ${signal ? getPriceActionColor(signal.action) : ""}`}>{signal ? priceStatusLabel(signal.status) : "—"}</div>
-                <div className="text-xs text-muted-foreground">{history?.stats && history.stats.observations >= 2 && history.stats.percent_vs_average != null ? `${Math.abs(history.stats.percent_vs_average)}% ${history.stats.percent_vs_average < 0 ? "below" : "above"} 90-day avg` : history?.history?.[0] ? `Tracking since ${new Date(history.history[0].date).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}` : "Not enough BuyWise history yet"}</div>
-              </div>
-            </div>
-          )}
-
           {signal && (
             <div className={`glass rounded-xl p-4 border-l-4 mb-4 ${signal.action === "BUY_NOW" ? "border-emerald-500" : signal.action === "WAIT" ? "border-amber-500" : "border-muted-foreground"}`}>
               <div className="flex items-center gap-2 mb-1">
@@ -115,22 +91,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
         ))}
       </nav>
 
-      <section id="recommendation" className="mb-16">
-        <div className="flex flex-wrap items-center gap-3 mb-6"><h2 className="text-2xl font-bold flex items-center gap-2"><Award className="w-6 h-6 text-indigo-500" /> Shopping decision</h2>{recs && <DataBadge meta={recs.meta} />}</div>
-        {recs ? <RecommendationCards recommendations={recs.recommendations} /> : <p className="text-sm text-muted-foreground">Recommendations unavailable right now.</p>}
-        {recs?.ai_explanation && (
-          <div className="glass rounded-2xl p-5 mt-6">
-            <div className="flex items-center gap-2 text-sm font-semibold mb-2"><Sparkles className="w-4 h-4 text-indigo-500" /> AI recommendation <span className="text-xs font-normal text-muted-foreground">({recs.ai_provider === "demo" ? "template explanation — AI provider not configured" : `explained by ${recs.ai_provider}, grounded in the data above`})</span></div>
-            <SafeText text={recs.ai_explanation} className="text-sm" />
-          </div>
-        )}
-      </section>
-
-      <section id="offers" className="mb-16">
-        <div className="flex flex-wrap items-center gap-3 mb-6"><h2 className="text-2xl font-bold flex items-center gap-2"><IndianRupee className="w-6 h-6 text-emerald-500" /> Compare offers</h2>{offers && <DataBadge meta={offers.meta} />}</div>
-        {offers?.meta.warnings.map((w) => <p key={w} className="text-sm text-amber-600 mb-2 flex gap-2"><Info className="w-4 h-4 mt-0.5" />{w}</p>)}
-        <div className="glass rounded-2xl overflow-hidden">{offers ? <OffersTable comparison={offers} /> : <p className="p-6 text-sm text-muted-foreground">Offers temporarily unavailable.</p>}</div>
-      </section>
+      <ComparisonSections productId={product.id} initialOffers={offers} initialRecs={recs} trusts={trusts} history={history} />
 
       <section id="history" className="mb-16">
         <div className="flex flex-wrap items-center gap-3 mb-6"><h2 className="text-2xl font-bold flex items-center gap-2"><TrendingDown className="w-6 h-6 text-purple-500" /> Price history</h2>{history && <DataBadge meta={history.meta} />}</div>

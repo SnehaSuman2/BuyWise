@@ -193,12 +193,21 @@ class Settings(BaseSettings):
     CELERY_BROKER_URL: str = ""
     CELERY_RESULT_BACKEND: str = ""
 
-    # --- Plan limits ---
-    FREE_MAX_ALERTS: int = 3
-    FREE_MAX_SAVED_PRODUCTS: int = 10
+    # --- Plan limits, per tier ---
+    # Free is a taste: one alert, a few saved products, the lowest price but not the
+    # retailer-by-retailer comparison. Each paid period unlocks more, and the yearly
+    # plan (PRO_MAX_*) is the ceiling.
+    FREE_MAX_ALERTS: int = 1
+    FREE_MAX_SAVED_PRODUCTS: int = 3
+    FREE_HISTORY_DAYS: int = 30
+    PRO_MONTHLY_MAX_ALERTS: int = 25
+    PRO_MONTHLY_MAX_SAVED_PRODUCTS: int = 100
+    PRO_MONTHLY_HISTORY_DAYS: int = 90
+    PRO_6MONTH_MAX_ALERTS: int = 50
+    PRO_6MONTH_MAX_SAVED_PRODUCTS: int = 250
+    PRO_6MONTH_HISTORY_DAYS: int = 180
     PRO_MAX_ALERTS: int = 100
     PRO_MAX_SAVED_PRODUCTS: int = 500
-    FREE_HISTORY_DAYS: int = 30
     PRO_HISTORY_DAYS: int = 365
 
     # ------------------------------------------------------------------ validators

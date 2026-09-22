@@ -91,7 +91,9 @@ async def test_agent_answers_about_the_generation_asked_for(client, monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_timing_and_where_to_buy_answers_lead_with_the_verdict(client, monkeypatch):
+async def test_timing_and_where_to_buy_answers_lead_with_the_verdict(
+    client, admin_headers, monkeypatch
+):
     items = [
         _listing("Apple iPhone 17 (256 GB) - Black", "Amazon.in", "amazon.in", 79900),
         _listing("Apple iPhone 17 256GB Black", "Flipkart", "flipkart.com", 79490),
@@ -114,12 +116,24 @@ async def test_timing_and_where_to_buy_answers_lead_with_the_verdict(client, mon
     ).json()
     assert where["intent"]["kind"] == "where_to_buy"
     first_line = where["answer"].split("\n")[0]
+    assert first_line.startswith("For ") and "lowest price" in first_line, first_line
+    assert "Pro" in first_line and "₹" in first_line
+    # The top tier gets the pick itself.
+    where = (
+        await client.post(
+            "/api/v1/agent",
+            headers=admin_headers,
+            json={"query": "best place to buy iphone 17 right now"},
+        )
+    ).json()
+    first_line = where["answer"].split("\n")[0]
     assert first_line.startswith("For ") and "best place right now is" in first_line, first_line
-    assert "₹" in first_line
 
 
 @pytest.mark.asyncio
-async def test_picks_never_claim_a_strong_trust_score_for_an_unrated_seller(client, monkeypatch):
+async def test_picks_never_claim_a_strong_trust_score_for_an_unrated_seller(
+    client, admin_headers, monkeypatch
+):
     items = [
         _listing("Apple iPhone 17 256GB Black", "GOT IT", "gotit.in", 79500),
         _listing("Apple iPhone 17 256GB Black", "Zepto", "zepto.com", 82900),
@@ -129,7 +143,7 @@ async def test_picks_never_claim_a_strong_trust_score_for_an_unrated_seller(clie
     monkeypatch.setattr(registry, "retailer_search_providers", lambda: [NoAmazon()])
     r = await client.post("/api/v1/search", json={"query": "iphone 17 256gb"})
     pid = r.json()["results"][0]["id"]
-    offers = (await client.get(f"/api/v1/products/{pid}/offers")).json()
+    offers = (await client.get(f"/api/v1/products/{pid}/offers", headers=admin_headers)).json()
     reasons = " ".join(p["reason"] for p in offers["picks"])
     assert "strong trust score" not in reasons and "n/a" not in reasons, reasons
     assert "not rated" in reasons or "not yet rated" in reasons, reasons

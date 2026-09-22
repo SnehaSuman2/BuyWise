@@ -23,4 +23,6 @@ async def agent_query(
     db: AsyncSession = Depends(get_db),
     user=Depends(get_optional_user),
 ):
-    return await ShoppingAgent(db).process(body.query, user.id if user else None, body.product_id)
+    return await ShoppingAgent(db).process(
+        body.query, user.id if user else None, body.product_id, user=user
+    )

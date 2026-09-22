@@ -51,8 +51,11 @@ async def test_logout_all_invalidates_access_tokens(client, auth_headers):
 
 @pytest.mark.asyncio
 async def test_alerts_are_private_and_limited(client, auth_headers, demo_product):
+    from app.services.subscription_service import tier
+
+    free_limit = tier("free").alerts
     assert (await client.get("/api/v1/alerts")).status_code == 401
-    for _ in range(3):
+    for _ in range(free_limit):
         r = await client.post(
             "/api/v1/alerts",
             json={"product_id": demo_product, "alert_type": "target_price", "target_price": 100},
@@ -66,7 +69,7 @@ async def test_alerts_are_private_and_limited(client, auth_headers, demo_product
     )
     assert over.status_code == 402
     mine = await client.get("/api/v1/alerts", headers=auth_headers)
-    assert len(mine.json()) == 3
+    assert len(mine.json()) == free_limit
     other = await client.post(
         "/api/v1/auth/register",
         json={"email": "o@buywisetest.com", "username": "other", "password": "Passw0rd!x"},

@@ -29,6 +29,7 @@ class SubscriptionResponse(BaseModel):
     cancel_at_period_end: bool = False
     limits: dict
     usage: dict
+    features: dict = {}  # e.g. {"compare_offers": bool}
     payments_enabled: bool
 
 

@@ -79,4 +79,10 @@ class OfferComparison(BaseModel):
     offers: list[OfferResponse] = []
     picks: list[OfferPick] = []
     lowest_final_price: float | None = None
+    # The retailer-by-retailer comparison is part of Pro. For everyone else the
+    # response carries the cheapest offer only, and says how much it is holding
+    # back. Enforced here, on the server, never by the page hiding rows.
+    locked: bool = False
+    hidden_offers: int = 0
+    hidden_retailers: int = 0
     meta: DataMeta

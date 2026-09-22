@@ -44,8 +44,8 @@ async def test_url_search_reports_match_confidence(client):
 
 
 @pytest.mark.asyncio
-async def test_offers_true_price_match_and_trust(client, demo_product):
-    r = await client.get(f"/api/v1/products/{demo_product}/offers")
+async def test_offers_true_price_match_and_trust(client, admin_headers, demo_product):
+    r = await client.get(f"/api/v1/products/{demo_product}/offers", headers=admin_headers)
     assert r.status_code == 200
     data = r.json()
     assert data["total_offers"] > 1 and data["picks"]
@@ -85,8 +85,10 @@ async def test_history_honest_when_insufficient(client, demo_product):
 
 
 @pytest.mark.asyncio
-async def test_recommendations_and_product_detail(client, demo_product):
-    rec = await client.get(f"/api/v1/products/{demo_product}/recommendations")
+async def test_recommendations_and_product_detail(client, admin_headers, demo_product):
+    rec = await client.get(
+        f"/api/v1/products/{demo_product}/recommendations", headers=admin_headers
+    )
     assert rec.status_code == 200
     data = rec.json()
     assert data["recommendations"] and data["ai_explanation"] and data["ai_provider"] == "demo"
@@ -141,8 +143,10 @@ async def test_agent_returns_structured_grounded_answer(client):
 
 
 @pytest.mark.asyncio
-async def test_affiliate_redirect_records_click(client, demo_product):
-    offers = (await client.get(f"/api/v1/products/{demo_product}/offers")).json()["offers"]
+async def test_affiliate_redirect_records_click(client, demo_product, admin_headers):
+    offers = (
+        await client.get(f"/api/v1/products/{demo_product}/offers", headers=admin_headers)
+    ).json()["offers"]
     r = await client.get(f"/api/v1/go/{offers[0]['id']}", follow_redirects=False)
     assert r.status_code == 302 and r.headers["location"].startswith("https://")
 

@@ -40,8 +40,10 @@ class AlertService:
         val = (await self.db.execute(stmt)).scalar_one_or_none()
         return float(val) if val is not None else None
 
-    def _limit(self, user: User) -> int:
-        return self.settings.PRO_MAX_ALERTS if user.plan == "pro" else self.settings.FREE_MAX_ALERTS
+    async def _limit(self, user: User) -> int:
+        from app.services.subscription_service import entitlements_for
+
+        return (await entitlements_for(self.db, user)).alerts
 
     async def create(self, user: User, data: AlertCreate) -> AlertResponse:
         product = (
@@ -60,10 +62,10 @@ class AlertService:
                 )
             )
         ).scalar_one()
-        if active >= self._limit(user):
+        if active >= await self._limit(user):
             raise HTTPException(
                 status_code=402,
-                detail=f"Alert limit reached for your plan ({self._limit(user)}). Upgrade to BuyWise Pro for more alerts.",
+                detail=f"Alert limit reached for your plan ({await self._limit(user)}). Upgrade to BuyWise Pro for more alerts.",
             )
         current = await self.current_lowest(product.id)
         alert = PriceAlert(

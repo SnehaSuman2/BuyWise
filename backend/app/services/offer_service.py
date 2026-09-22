@@ -102,8 +102,14 @@ class OfferService:
         return {"providers": providers_used, "warnings": warnings, "stored": stored}
 
     async def compare(
-        self, product_id: uuid.UUID, *, refresh: bool = False
+        self, product_id: uuid.UUID, *, refresh: bool = False, full: bool = True
     ) -> OfferComparison | None:
+        """The comparison for a product.
+
+        With full=False (a visitor without Pro) the result keeps only the cheapest
+        exact offer and reports how many offers and retailers it is holding back.
+        The ranking still runs over everything so lowest_final_price is honest.
+        """
         product = await catalog.load_product(self.db, product_id)
         if product is None:
             return None
@@ -153,14 +159,26 @@ class OfferService:
         exact = [r for r in responses if r.match.match_type == MatchType.EXACT.value]
         picks = self.rank(exact)
         is_demo = bool(offers) and all(o.is_demo for o in offers)
+        lowest = min((r.price.estimated_final_price for r in exact), default=None)
+        locked, hidden_offers, hidden_retailers = False, 0, 0
+        if not full and responses:
+            cheapest = min(exact or responses, key=lambda r: r.price.estimated_final_price)
+            hidden_offers = len(responses) - 1
+            hidden_retailers = len({r.retailer.id for r in responses} - {cheapest.retailer.id})
+            responses = [cheapest]
+            picks = []
+            locked = True
         return OfferComparison(
             product_id=product.id,
             product_name=product.name,
-            total_offers=len(responses),
+            total_offers=len(responses) + hidden_offers,
             exact_offers=len(exact),
             offers=responses,
             picks=picks,
-            lowest_final_price=min((r.price.estimated_final_price for r in exact), default=None),
+            lowest_final_price=lowest,
+            locked=locked,
+            hidden_offers=hidden_offers,
+            hidden_retailers=hidden_retailers,
             meta=DataMeta(
                 data_mode="demo"
                 if is_demo

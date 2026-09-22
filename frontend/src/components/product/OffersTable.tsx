@@ -7,6 +7,7 @@ import VerificationBadge from "@/components/trust/VerificationBadge";
 import { formatPrice, getTrustColor, matchBadgeClass, formatRelativeTime } from "@/lib/utils";
 import type { OfferComparison, Offer } from "@/lib/types";
 import { track } from "@/lib/analytics";
+import LockedPanel from "@/components/product/LockedPanel";
 
 function PriceBreakdown({ o }: { o: Offer }) {
   const p = o.price;
@@ -36,6 +37,9 @@ export default function OffersTable({ comparison }: { comparison: OfferCompariso
   if (!comparison.offers.length) return <p className="text-sm text-muted-foreground p-6">No offers recorded yet for this product.</p>;
   return (
     <div className="overflow-x-auto">
+      {comparison.locked && (
+        <div className="px-4 pt-4 pb-2 text-xs text-muted-foreground">Lowest price found. The comparison across every retailer is part of Pro.</div>
+      )}
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-border/40 text-muted-foreground">
@@ -104,6 +108,9 @@ export default function OffersTable({ comparison }: { comparison: OfferCompariso
           })}
         </tbody>
       </table>
+      {comparison.locked && (
+        <div className="p-4"><LockedPanel hiddenOffers={comparison.hidden_offers} hiddenRetailers={comparison.hidden_retailers} what="the full comparison" /></div>
+      )}
       <p className="px-4 py-3 text-xs text-muted-foreground">Sorted by estimated final price. Only exact matches are used for picks; variants and similar products are shown for context. Prices can differ by pincode and change at checkout. Sellers marked <strong>Unverified</strong> have not been assessed yet — BuyWise gathers evidence on them in the background, and merchants it assesses as high risk are withheld entirely. Sellers are never able to pay for inclusion or a better score.</p>
     </div>
   );

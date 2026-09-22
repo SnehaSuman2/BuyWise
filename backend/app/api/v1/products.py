@@ -20,6 +20,7 @@ from app.services.offer_service import OfferService
 from app.services.price_history_service import PriceHistoryService
 from app.services.recommendation_engine import RecommendationEngine
 from app.services.review_analyzer import ReviewAnalyzer
+from app.services.subscription_service import entitlements_for
 from app.services.trust_service import TrustService
 
 router = APIRouter(prefix="/products", tags=["products"])
@@ -80,7 +81,8 @@ async def get_product_offers(
     """Offers with true-price breakdown, match confidence and trust. `refresh=true` forces a live refresh (Pro or admin)."""
     if refresh and not (user and (user.plan == "pro" or user.role == "admin")):
         refresh = False
-    result = await OfferService(db).compare(product_id, refresh=refresh)
+    ent = await entitlements_for(db, user)
+    result = await OfferService(db).compare(product_id, refresh=refresh, full=ent.compare_offers)
     if result is None:
         raise HTTPException(status_code=404, detail="Product not found")
     return result
@@ -96,9 +98,7 @@ async def get_price_history(
     db: AsyncSession = Depends(get_db),
     user=Depends(get_optional_user),
 ):
-    max_days = (
-        settings.PRO_HISTORY_DAYS if user and user.plan == "pro" else settings.FREE_HISTORY_DAYS
-    )
+    max_days = (await entitlements_for(db, user)).history_days
     result = await PriceHistoryService(db).get_history(
         product_id, days, max_days=max(max_days, 90 if settings.demo_mode else max_days)
     )
@@ -126,8 +126,11 @@ async def get_product_trust(product_id: UUID, db: AsyncSession = Depends(get_db)
 
 
 @router.get("/{product_id}/recommendations", response_model=RecommendationSet)
-async def get_recommendations(product_id: UUID, db: AsyncSession = Depends(get_db)):
-    result = await RecommendationEngine(db).generate(product_id)
+async def get_recommendations(
+    product_id: UUID, db: AsyncSession = Depends(get_db), user=Depends(get_optional_user)
+):
+    ent = await entitlements_for(db, user)
+    result = await RecommendationEngine(db).generate(product_id, full=ent.compare_offers)
     if result is None:
         raise HTTPException(status_code=404, detail="Product not found")
     return result

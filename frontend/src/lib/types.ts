@@ -169,6 +169,10 @@ export interface OfferComparison {
   offers: Offer[];
   picks: OfferPick[];
   lowest_final_price?: number | null;
+  /** True when the server sent only the cheapest offer because the viewer is not on Pro. */
+  locked?: boolean;
+  hidden_offers?: number;
+  hidden_retailers?: number;
   meta: DataMeta;
 }
 
@@ -312,6 +316,7 @@ export interface RecommendationSet {
   product_id: string;
   product_name: string;
   recommendations: Recommendation[];
+  locked?: boolean;
   ai_explanation?: string | null;
   ai_provider?: string | null;
   meta: DataMeta;
@@ -445,6 +450,7 @@ export interface SubscriptionStatus {
   cancel_at_period_end: boolean;
   limits: Record<string, number>;
   usage: Record<string, number>;
+  features?: Record<string, boolean>;
   payments_enabled: boolean;
 }
 
