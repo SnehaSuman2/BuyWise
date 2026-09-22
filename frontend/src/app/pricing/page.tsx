@@ -47,6 +47,7 @@ export default function PricingPage() {
 
   const checkout = async (planId: string) => {
     if (!user) { router.push(`/login?next=/pricing`); return; }
+    if (meta && meta.payments_ready === false) { setMsg({ ok: false, text: "Checkout is unavailable right now: Razorpay is not accepting this site's payment keys." }); return; }
     setBusy(planId); setMsg(null);
     try {
       const order = await api.createOrder(planId);
@@ -108,6 +109,7 @@ export default function PricingPage() {
       </div>
 
       {meta && !meta.payments_enabled && <p className="mb-6 text-sm text-amber-600 flex items-center justify-center gap-2"><AlertTriangle className="w-4 h-4" /> Payments are not configured on this deployment yet (Razorpay keys missing). Plans are shown for reference.</p>}
+      {meta && meta.payments_enabled && meta.payments_ready === false && <p className="mb-6 text-sm text-amber-600 flex items-center justify-center gap-2"><AlertTriangle className="w-4 h-4" /> Checkout is unavailable right now: Razorpay is not accepting this site&apos;s payment keys. Nothing you do here can be charged. Please try again later.</p>}
       {msg && <div className={`mb-6 p-3 rounded-xl text-sm border text-center ${msg.ok ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20" : "bg-rose-500/10 text-rose-600 border-rose-500/20"}`}>{msg.text}</div>}
       {currentSub?.is_pro && <div className="mb-6 glass rounded-2xl p-4 text-sm flex flex-wrap items-center justify-between gap-3"><span>You are on <strong>{currentSub.plan.replace(/_/g, " ")}</strong>{currentSub.current_period_end ? ` until ${formatDate(currentSub.current_period_end)}` : ""}{currentSub.cancel_at_period_end ? " (cancellation scheduled)" : ""}.</span>{!currentSub.cancel_at_period_end && <button onClick={cancel} disabled={busy === "cancel"} className="px-3 py-1.5 rounded-lg glass text-xs font-medium hover:bg-muted/50">Cancel renewal</button>}</div>}
 
@@ -137,7 +139,7 @@ export default function PricingPage() {
               <ul className="space-y-1.5 text-sm text-muted-foreground flex-1 mb-4">{p.features.map((f) => <li key={f} className="flex gap-2"><Check className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />{f}</li>)}</ul>
 
               {p.id === "free" ? <div className="text-center text-sm text-muted-foreground py-2.5">{current ? "Current plan" : "Included"}</div> : (
-                <button onClick={() => checkout(p.id)} disabled={busy === p.id || current || (meta ? !meta.payments_enabled : false)} className={`w-full py-2.5 rounded-xl font-medium flex items-center justify-center gap-2 disabled:opacity-50 transition-colors ${highlight ? "gradient-primary text-white" : "glass hover:bg-muted/50"}`}>
+                <button onClick={() => checkout(p.id)} disabled={busy === p.id || current || (meta ? !meta.payments_enabled || meta.payments_ready === false : false)} className={`w-full py-2.5 rounded-xl font-medium flex items-center justify-center gap-2 disabled:opacity-50 transition-colors ${highlight ? "gradient-primary text-white" : "glass hover:bg-muted/50"}`}>
                   <QrCode className="w-4 h-4" />
                   {current ? "Current plan" : busy === p.id ? "Opening checkout…" : user ? "Pay by UPI or card" : "Sign in to subscribe"}
                 </button>

@@ -244,3 +244,79 @@ def test_auth_failures_are_told_apart_from_other_vendor_errors():
     from app.providers.payments.razorpay import RazorpayAuthError, RazorpayError
 
     assert issubclass(RazorpayAuthError, RazorpayError)
+
+
+@pytest.fixture
+def fresh_credential_cache(monkeypatch):
+    """The credential verdict is cached per process; each test starts clean."""
+    import app.providers.payments.razorpay as rp
+
+    monkeypatch.setattr(rp, "_CREDENTIAL_CHECK", None)
+    return rp
+
+
+@pytest.mark.asyncio
+async def test_a_refused_key_is_reported_as_not_ready(fresh_credential_cache, monkeypatch):
+    """A regenerated key is still configured, so 'configured' cannot mean 'works'."""
+    from app.core.config import get_settings
+    from app.providers.payments.razorpay import RazorpayAuthError
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "RAZORPAY_KEY_ID", "rzp_test_dead")
+    monkeypatch.setattr(settings, "RAZORPAY_KEY_SECRET", "dead")
+
+    async def refuse(self, *args, **kwargs):
+        raise RazorpayAuthError("Razorpay rejected the API credentials (HTTP 401)")
+
+    monkeypatch.setattr(RazorpayClient, "_request", refuse)
+    assert await RazorpayClient().credentials_ok() is False
+
+
+@pytest.mark.asyncio
+async def test_unreachable_razorpay_is_not_treated_as_a_refusal(
+    fresh_credential_cache, monkeypatch
+):
+    """A network blip must not take checkout down across the whole site."""
+    from app.core.config import get_settings
+    from app.providers.payments.razorpay import RazorpayError
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "RAZORPAY_KEY_ID", "rzp_test_ok")
+    monkeypatch.setattr(settings, "RAZORPAY_KEY_SECRET", "ok")
+
+    async def unreachable(self, *args, **kwargs):
+        raise RazorpayError("Razorpay request failed: ConnectTimeout")
+
+    monkeypatch.setattr(RazorpayClient, "_request", unreachable)
+    assert await RazorpayClient().credentials_ok() is True
+
+
+@pytest.mark.asyncio
+async def test_credential_verdict_is_cached(fresh_credential_cache, monkeypatch):
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "RAZORPAY_KEY_ID", "rzp_test_ok")
+    monkeypatch.setattr(settings, "RAZORPAY_KEY_SECRET", "ok")
+    calls = []
+
+    async def counted(self, *args, **kwargs):
+        calls.append(args)
+        return {"items": []}
+
+    monkeypatch.setattr(RazorpayClient, "_request", counted)
+    assert await RazorpayClient().credentials_ok() is True
+    assert await RazorpayClient().credentials_ok() is True
+    assert len(calls) == 1, "the verdict should be reused, not re-fetched per request"
+
+
+@pytest.mark.asyncio
+async def test_meta_reports_payment_readiness(client, fresh_credential_cache, monkeypatch):
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "RAZORPAY_KEY_ID", "")
+    monkeypatch.setattr(settings, "RAZORPAY_KEY_SECRET", "")
+    body = (await client.get("/api/v1/meta")).json()
+    assert body["payments_enabled"] is False and body["payments_ready"] is False
+    assert "razorpay_key_secret" not in json.dumps(body).lower()

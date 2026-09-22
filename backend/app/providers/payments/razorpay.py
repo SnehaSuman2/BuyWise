@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
+import time
 from typing import Any
 
 from app.core.config import get_settings
@@ -16,6 +17,10 @@ from app.core.http import request_with_retry
 
 logger = logging.getLogger(__name__)
 RAZORPAY_API = "https://api.razorpay.com/v1"
+# Result of the last credential check, and when it was taken. A key pair does
+# not change between requests, so asking once every few minutes is enough.
+_CREDENTIAL_CHECK: tuple[float, bool] | None = None
+_CREDENTIAL_TTL = 600.0
 
 
 class RazorpayError(Exception):
@@ -98,6 +103,36 @@ class RazorpayClient:
             "/orders",
             {"amount": amount_paise, "currency": currency, "receipt": receipt, "notes": notes},
         )
+
+    async def credentials_ok(self) -> bool:
+        """Whether Razorpay still accepts the configured key id and secret.
+
+        A key that has been regenerated or deleted still looks configured from
+        inside: the settings are populated, so the site offers checkout, and
+        the shopper meets a bare "Oops! Something went wrong" from Razorpay's
+        own script at its loading screen. Asking first lets the page say what
+        is actually wrong, and lets the logs name it.
+
+        Being unable to reach Razorpay is not a verdict. Only an explicit
+        refusal counts as a no, so a network blip never takes payments down.
+        """
+        global _CREDENTIAL_CHECK
+        if not self.enabled:
+            return False
+        now = time.monotonic()
+        if _CREDENTIAL_CHECK is not None and now - _CREDENTIAL_CHECK[0] < _CREDENTIAL_TTL:
+            return _CREDENTIAL_CHECK[1]
+        try:
+            await self._request("GET", "/orders?count=1")
+            ok = True
+        except RazorpayAuthError as exc:
+            logger.error("Razorpay refused the configured credentials: %s", exc)
+            ok = False
+        except RazorpayError as exc:
+            logger.warning("Could not check Razorpay credentials: %s", exc)
+            return _CREDENTIAL_CHECK[1] if _CREDENTIAL_CHECK is not None else True
+        _CREDENTIAL_CHECK = (now, ok)
+        return ok
 
     async def fetch_payment(self, payment_id: str) -> dict[str, Any]:
         return await self._request("GET", f"/payments/{payment_id}")

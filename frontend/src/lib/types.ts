@@ -544,6 +544,8 @@ export interface AppMeta {
   demo_mode: boolean;
   ai_mode: "live" | "demo";
   payments_enabled: boolean;
+  /** Keys are configured AND Razorpay still accepts them. False means checkout cannot open. */
+  payments_ready?: boolean;
   google_auth_enabled: boolean;
   image_search_enabled: boolean;
   trust_sources: string[];

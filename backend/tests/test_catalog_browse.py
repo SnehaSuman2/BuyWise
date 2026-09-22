@@ -101,8 +101,8 @@ async def test_category_page_filters_by_spec_and_shows_live_prices(
 async def test_category_prices_are_withheld_without_pro(
     client,
     admin_headers,
-    paywall,
-    monkeypatch,  # noqa: F811
+    paywall,  # noqa: F811
+    monkeypatch,
 ):
     google = FakeSearch(
         [listing("Apple iPhone 17 (Black, 256 GB)", "Flipkart", "flipkart.com", 79999)]
