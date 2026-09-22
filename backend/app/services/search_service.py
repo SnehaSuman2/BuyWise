@@ -34,7 +34,12 @@ from app.services import catalog
 from app.services.market_filter import filter_to_market
 from app.services.price_engine import true_price_from_listing
 from app.services.product_matcher import Candidate, MatchResult, MatchType, match_products
-from app.services.product_normalizer import extract_attributes, search_query_for
+from app.services.product_normalizer import (
+    KNOWN_BRANDS,
+    PRODUCT_LINE_BRANDS,
+    extract_attributes,
+    search_query_for,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +147,21 @@ def filter_rentals(listings: list, query_text: str | None) -> tuple[list, int]:
     return kept, dropped
 
 
+def filter_services(listings: list, query_text: str | None) -> tuple[list, int]:
+    """Drop services sold under a product's name (unlocks, activations, repairs)
+    and catalogue-style listings that name every model at once, unless the
+    shopper asked for one. Neither is a price for the product."""
+    query_attrs = extract_attributes(query_text or "")
+    kept, dropped = [], 0
+    for listing in listings:
+        a = extract_attributes(listing.title, None, listing.brand)
+        if (a.is_service and not query_attrs.is_service) or a.is_catalogue:
+            dropped += 1
+        else:
+            kept.append(listing)
+    return kept, dropped
+
+
 def filter_implausible_price_outliers(listings: list) -> tuple[list, int]:
     """Drop a listing priced far below others that are almost certainly the same
     device line, even when they never join the same product group.
@@ -200,7 +220,12 @@ def hide_non_product_cards(
     kept, hidden = [], 0
     for r in results:
         a = extract_attributes(r.name, None, r.brand)
-        if (a.is_accessory and not q.is_accessory) or (a.is_rental and not q.is_rental):
+        if (
+            (a.is_accessory and not q.is_accessory)
+            or (a.is_rental and not q.is_rental)
+            or (a.is_service and not q.is_service)
+            or a.is_catalogue
+        ):
             hidden += 1
         else:
             kept.append(r)
@@ -349,6 +374,12 @@ class SearchService:
         listings, dropped_rentals = filter_rentals(listings, accessory_query)
         if dropped_rentals:
             warnings.append(f"Hid {dropped_rentals} rental listing(s) — not a purchase price.")
+        listings, dropped_services = filter_services(listings, accessory_query)
+        if dropped_services:
+            warnings.append(
+                f"Hid {dropped_services} listing(s) that are services or catalogue "
+                f"entries, not the product."
+            )
 
         listings, dropped_implausible = filter_implausible_price_outliers(listings)
         if dropped_implausible:
@@ -424,6 +455,9 @@ class SearchService:
                 f"of the same model (likely spam or mismatched listings)."
             )
         results = self._sort(results, request.sort_by)
+        family = None
+        if query_type == "text":
+            family = await self._family_for(query_text, results, see_prices)
         if not see_prices:
             results = self.withhold_prices(results)
         total = len(results)
@@ -459,6 +493,7 @@ class SearchService:
             page=request.page,
             page_size=request.page_size,
             results=page_results,
+            family=family,
             meta=DataMeta(
                 data_mode=data_mode,
                 is_demo=is_demo,
@@ -621,8 +656,30 @@ class SearchService:
         query_ref = Candidate(query_text)
         if not query_ref.attrs.model_tokens:
             return groups, 0
+        q = query_ref.attrs
+        # The query's brand is only trusted when it is a brand we know, not the
+        # first word of a model name ("pixaplay 35").
+        q_brand = (
+            q.brand
+            if q.brand and (q.brand in KNOWN_BRANDS or q.brand in PRODUCT_LINE_BRANDS.values())
+            else None
+        )
         kept, hidden = [], 0
         for g in groups:
+            ref = g.reference.attrs
+            # A different family or generation is a different product: "iPhone
+            # Air" or "Galaxy S25 Ultra" is no answer to "iPhone 17", however the
+            # words overlap. A different tier of the same generation (17 Pro) is
+            # a sibling and stays, as its own card.
+            if q.line_family and ref.line_family:
+                if ref.line_family != q.line_family or (
+                    q.line_number and ref.line_number != q.line_number
+                ):
+                    hidden += 1
+                    continue
+            if q_brand and ref.brand and ref.brand != q_brand:
+                hidden += 1
+                continue
             m = match_products(query_ref, g.reference)
             conflicting = m.match_type == MatchType.UNKNOWN or any(
                 r.startswith(("Model code differs", "Generation differs")) for r in m.reasons
@@ -734,6 +791,28 @@ class SearchService:
                 )
             )
         return out
+
+    async def _family_for(
+        self, query_text: str, results: list[ProductSearchResult], see_prices: bool
+    ):
+        """The line's variants and stores in one view, when the query names a line."""
+        from app.services.family_service import FamilyService, family_for_query
+
+        named = family_for_query(query_text)
+        if named is None:
+            return None
+        line, label, storage = named
+        try:
+            return await FamilyService(self.db).build(
+                line,
+                seed_ids={r.id for r in results},
+                see_prices=see_prices,
+                selected_storage=storage,
+                label=label,
+            )
+        except Exception as exc:  # the cards still answer; the family is extra
+            logger.warning("Family view failed for %s: %s", line, type(exc).__name__)
+            return None
 
     async def _catalog_fallback(self, query_text: str) -> list[ProductSearchResult]:
         from sqlalchemy import select

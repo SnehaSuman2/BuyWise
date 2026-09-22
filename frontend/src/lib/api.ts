@@ -4,7 +4,7 @@ import type {
   AgentResponse,
   CommunityReport,
   CommunityReportCreate, AppMeta, CreateOrderResponse, Dashboard, OfferComparison, PlanInfo, PriceAlert, PriceHistoryData,
-  ProductDetail, RecommendationSet, Retailer, SearchResponse, SubscriptionStatus, TokenResponse, TrustScoreData, User,
+  ProductDetail, ProductFamily, RecommendationSet, Retailer, SearchResponse, SubscriptionStatus, TokenResponse, TrustScoreData, User,
 } from "./types";
 
 export const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
@@ -152,6 +152,7 @@ export const api = {
   // search / products
   search: (data: { query?: string; url?: string; image_url?: string; image_base64?: string; min_price?: number; max_price?: number; sort_by?: string; page?: number; page_size?: number }) => request<SearchResponse>("/search", { method: "POST", body: JSON.stringify(data) }),
   product: (id: string) => request<ProductDetail>(`/products/${id}`),
+  family: (line: string) => request<ProductFamily>(`/products/family?line=${encodeURIComponent(line)}`),
   offers: (id: string, refresh = false) => request<OfferComparison>(`/products/${id}/offers${refresh ? "?refresh=true" : ""}`),
   history: (id: string, days = 90) => request<PriceHistoryData>(`/products/${id}/history?days=${days}`),
   productTrust: (id: string) => request<TrustScoreData[]>(`/products/${id}/trust`),

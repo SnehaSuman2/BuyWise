@@ -358,6 +358,111 @@ GENERIC_WORDS = {
 }
 
 RENTAL_WORDS = {"on rent", "for rent", "rental", "rent to own"}
+# A service sold against a product's name is not the product: carrier unlocks,
+# activations, repairs. They are priced in hundreds and would otherwise become
+# the "cheapest iPhone 17" on the page.
+SERVICE_WORDS = {
+    "unlock service",
+    "unlocking service",
+    "network unlock",
+    "carrier unlock",
+    "sim unlock",
+    "factory unlock service",
+    "activation service",
+    "network services",
+    "fast service",
+    "repair service",
+    "esim service",
+    "active line",
+    "imei check",
+    "imei service",
+    "service only",
+    "screen replacement service",
+    "battery replacement service",
+}
+# Display names for product lines the title regex recognises, keyed by the
+# family text with spaces removed. Anything absent is title-cased.
+_FAMILY_LABELS = {
+    "iphone": "iPhone",
+    "ipad": "iPad",
+    "ipadair": "iPad Air",
+    "ipadpro": "iPad Pro",
+    "ipadmini": "iPad mini",
+    "macbookair": "MacBook Air",
+    "macbookpro": "MacBook Pro",
+    "applewatch": "Apple Watch",
+    "applewatchse": "Apple Watch SE",
+    "applewatchultra": "Apple Watch Ultra",
+    "airpods": "AirPods",
+    "airpodspro": "AirPods Pro",
+    "oneplus": "OnePlus",
+    "oneplusnord": "OnePlus Nord",
+    "oneplusnordce": "OnePlus Nord CE",
+    "nordce": "Nord CE",
+    "iqoo": "iQOO",
+    "iqooz": "iQOO Z",
+    "iqooneo": "iQOO Neo",
+    "rog": "ROG",
+    "xps": "XPS",
+    "tuf": "TUF",
+    "cmfphone": "CMF Phone",
+    "firetv": "Fire TV",
+    "firetvstick": "Fire TV Stick",
+    "xboxseries": "Xbox Series",
+    "pocox": "POCO X",
+    "pocof": "POCO F",
+    "pocom": "POCO M",
+    "pococ": "POCO C",
+    "galaxyzfold": "Galaxy Z Fold",
+    "galaxyzflip": "Galaxy Z Flip",
+    "galaxytabs": "Galaxy Tab S",
+    "galaxytaba": "Galaxy Tab A",
+    "galaxys": "Galaxy S",
+    "galaxya": "Galaxy A",
+    "galaxym": "Galaxy M",
+    "galaxyf": "Galaxy F",
+    "galaxynote": "Galaxy Note",
+    "realmegt": "Realme GT",
+    "redminote": "Redmi Note",
+    "motog": "Moto G",
+    "motoedge": "Moto Edge",
+    "motorolaedge": "Motorola Edge",
+    "nothingphone": "Nothing Phone",
+    "thinkpadx": "ThinkPad X",
+    "thinkpadt": "ThinkPad T",
+    "thinkpadl": "ThinkPad L",
+    "thinkpade": "ThinkPad E",
+    "thinkpadp": "ThinkPad P",
+    "ideapad": "IdeaPad",
+    "vivobook": "Vivobook",
+    "zenbook": "Zenbook",
+}
+_TIER_LABELS = {"fe": "FE", "se": "SE", "ce": "CE", "pro+": "Pro+", "pro plus": "Pro Plus"}
+# Families whose number attaches to a letter: "Galaxy S25", "POCO X7", "Vivo T4".
+_ATTACHED_NUMBER_FAMILIES = {
+    "galaxys",
+    "galaxya",
+    "galaxym",
+    "galaxyf",
+    "pocox",
+    "pocof",
+    "pocom",
+    "pococ",
+    "vivot",
+    "vivov",
+    "vivox",
+    "vivoy",
+    "iqooz",
+    "thinkpadx",
+    "thinkpadt",
+    "thinkpadl",
+    "thinkpade",
+    "thinkpadp",
+}
+# The tier words a listing that "sells every model" strings together.
+_TIER_LIST_RE = re.compile(
+    r"\b(pro\s?max|pro\s?plus|pro\+|pro|max|plus|ultra|air|mini|fe|lite|neo)\b", re.I
+)
 PRODUCT_LINE_BRANDS = {
     "iphone": "apple",
     "ipad": "apple",
@@ -429,12 +534,47 @@ _LINE_RE = re.compile(
     r"pavilion|omen|legion|tuf|rog|playstation|xbox\s?series|kindle|"
     r"echo\s?(?:dot|show)?|fire\s?tv(?:\s?stick)?"
     r")"
-    r"\s?(?:series\s?)?"
-    r"(\d{1,3}(?!\s?(?:gb|tb|mm|hz|mah|mp|w|inch|in\b|g\b))[a-z]{0,2})"
+    r"(?:\s?(?:series\s?)?"
+    r"(\d{1,3}(?!\s?(?:gb|tb|mm|hz|mah|mp|w|inch|in\b|g\b))[a-z]{0,2}))?"
     r"(?:\s?(pro\s?max|pro\s?plus|pro\+|pro|max|plus|ultra|fe|lite|neo|mini|air|edge|se|"
     r"prime|power|turbo|classic|fold|flip))?\b",
     re.I,
 )
+
+
+def find_line(text: str):
+    """The first product-line mention that carries a number or a tier.
+
+    "iPhone 17", "iPhone Air" and "Galaxy S25 Ultra" all count; a bare "iphone"
+    (as in "iphone case") does not. Returns (family, number, tier) or None.
+    """
+    for m in _LINE_RE.finditer(text):
+        family, number, tier = m.group(1), m.group(2), m.group(3)
+        if number or tier:
+            if family.lower() == "iphone" and tier and tier.lower() == "air":
+                # Apple's line is "iPhone Air"; retailers write "iPhone 17 Air".
+                number = None
+            return family, number, tier
+    return None
+
+
+def line_token(family: str, number: str | None, tier: str | None) -> str:
+    return re.sub(r"[\s+]", "", f"{family}{number or ''}{tier or ''}").lower()
+
+
+def line_label(family: str, number: str | None, tier: str | None) -> str:
+    """A display name for a line: "iPhone 17 Pro Max", "Galaxy S25 Ultra"."""
+    key = re.sub(r"\s+", "", family.lower())
+    name = _FAMILY_LABELS.get(key) or family.title()
+    if number:
+        shown = number if key == "pixel" else number.upper()
+        name = f"{name}{shown}" if key in _ATTACHED_NUMBER_FAMILIES else f"{name} {shown}"
+    if tier:
+        t = re.sub(r"\s+", " ", tier.lower())
+        name = f"{name} {_TIER_LABELS.get(t) or t.title()}"
+    return name
+
+
 # A quantity with a unit ("30hrs", "48mp", "6.3-inch", "256gb") is a specification,
 # never a model code, however code-like it looks to the token pattern below.
 _UNIT_TOKEN_RE = re.compile(
@@ -461,6 +601,22 @@ class NormalizedAttributes:
     generation: str | None = None
     chip: str | None = None
     is_accessory: bool = False
+    is_rental: bool = False
+    # A service sold under the product's name (unlock, activation, repair).
+    is_service: bool = False
+    # A listing that names several models or every storage size at once: a
+    # wholesaler's catalogue entry, not one product at one price.
+    is_catalogue: bool = False
+    # The product line with its generation and tier ("iphone17promax"), and the
+    # way people write it ("iPhone 17 Pro Max"). Storage and colour are variants
+    # within a line; everything sold as this line belongs to one family.
+    line: str | None = None
+    line_label: str | None = None
+    # The parts of the line: "iphone" and "17". A different family or a
+    # different generation is a different product; a different tier (Pro, Max)
+    # is a sibling of the same generation.
+    line_family: str | None = None
+    line_number: str | None = None
     model_tokens: list[str] = field(default_factory=list)
     tokens: set[str] = field(default_factory=set)
     clean_title: str = ""
@@ -488,6 +644,8 @@ class NormalizedAttributes:
             "generation": self.generation,
             "chip": self.chip,
             "is_accessory": self.is_accessory,
+            "line": self.line,
+            "line_label": self.line_label,
         }
 
 
@@ -503,6 +661,7 @@ def normalize_title(title: str) -> str:
     t = title.lower()
     t = re.sub(r"[™®©]", " ", t)
     t = re.sub(r"[\[\]{}]", " ", t)
+    t = re.sub(r"\bi\s?-?\s?phone\b", "iphone", t)
     t = re.sub(r"\s+", " ", t).strip()
     return t
 
@@ -548,6 +707,10 @@ def extract_attributes(
     # flagged the same way, so like still matches like.
     attrs.is_accessory = any(re.search(rf"\b{re.escape(w)}s?\b", text) for w in ACCESSORY_WORDS)
     attrs.is_rental = any(re.search(rf"\b{re.escape(w)}\b", text) for w in RENTAL_WORDS)
+    attrs.is_service = any(re.search(rf"\b{re.escape(w)}\b", text) for w in SERVICE_WORDS)
+    tiers = {re.sub(r"\s+", " ", m.group(1).lower()) for m in _TIER_LIST_RE.finditer(text)}
+    sizes = {_norm_storage(m.group(1), m.group(2)) for m in _STORAGE_RE.finditer(text)}
+    attrs.is_catalogue = len(tiers) >= 3 or len(sizes) >= 4
 
     # RAM / storage
     pair = _PAIR_RE.search(text)
@@ -565,7 +728,11 @@ def extract_attributes(
             for v, u in candidates
             if not (attrs.ram and f"{int(v)}GB" == attrs.ram and u.lower() == "gb")
         ]
-        if candidates:
+        distinct = {_norm_storage(str(v), u) for v, u in candidates}
+        if len(distinct) >= 3:
+            # "256GB/512GB/1TB" is a menu, not this listing's storage.
+            attrs.storage = None
+        elif candidates:
             v, u = max(candidates, key=lambda c: c[0] * (1024 if c[1].lower() == "tb" else 1))
             attrs.storage = _norm_storage(str(v), u)
         elif specs.get("storage"):
@@ -576,6 +743,12 @@ def extract_attributes(
         m = re.search(r"(\d+)", specs["ram"])
         if m:
             attrs.ram = f"{int(m.group(1))}GB"
+    if len(sizes) >= 3:
+        # "256GB/512GB/1TB" is a menu of sizes, not this listing's storage, and
+        # the first pair of it is not RAM either.
+        attrs.storage = None
+        if pair and attrs.ram == f"{int(pair.group(1))}GB":
+            attrs.ram = None
 
     # color (longest match wins)
     color_source = f"{text} {specs.get('colour', '')} {specs.get('color', '')}".lower()
@@ -596,13 +769,17 @@ def extract_attributes(
     if gen:
         attrs.generation = next(g for g in gen.groups() if g)
     line_tokens: list[str] = []
-    line = _LINE_RE.search(text)
+    line = find_line(text)
     if line:
-        family, number, tier = line.group(1), line.group(2), line.group(3)
-        if not attrs.generation:
+        family, number, tier = line
+        if number and not attrs.generation:
             attrs.generation = number.lower()
-        token = re.sub(r"[\s+]", "", f"{family}{number}{tier or ''}").lower()
+        token = line_token(family, number, tier)
         line_tokens.append(token)
+        attrs.line = token
+        attrs.line_label = line_label(family, number, tier)
+        attrs.line_family = re.sub(r"\s+", "", family.lower())
+        attrs.line_number = number.lower() if number else None
     chip = _CHIP_RE.search(text)
     if chip:
         attrs.chip = re.sub(r"\s+", " ", chip.group(1).lower())
@@ -630,6 +807,7 @@ def extract_attributes(
             or word in COLORS
             or _UNIT_TOKEN_RE.fullmatch(number)
             or re.fullmatch(r"(19|20)\d\d", number)
+            or re.fullmatch(r"a1[5-9]|m[1-4]", number)  # a chip, not a model
             or (number.isdigit() and len(number) > 4)
         ):
             continue
@@ -653,7 +831,11 @@ def extract_attributes(
         ):
             attrs.model_tokens.append(a + b)
     attrs.model_tokens = sorted(set(attrs.model_tokens) | set(line_tokens))
-    attrs.model = specs.get("model") or (attrs.model_tokens[0] if attrs.model_tokens else None)
+    # The line is the model people know ("iphone17"); a stray code in the title
+    # ("A3258", a seller's SKU) must not displace it.
+    attrs.model = (
+        specs.get("model") or attrs.line or (attrs.model_tokens[0] if attrs.model_tokens else None)
+    )
 
     # generic tokens for similarity: strip variant words so variants of one product look alike
     core = _PAIR_RE.sub(" ", text)

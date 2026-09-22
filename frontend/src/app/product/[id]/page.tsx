@@ -64,6 +64,9 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
             <DataBadge meta={product.meta} />
           </div>
           <h1 className="text-2xl sm:text-3xl font-bold mb-3">{product.name}</h1>
+          {product.family_line && (
+            <Link href={`/family/${encodeURIComponent(product.family_line)}`} className="inline-flex items-center gap-1 text-sm font-medium text-indigo-500 hover:underline mb-3">Every storage size and store for {product.family_label || "this line"} →</Link>
+          )}
           <div className="flex flex-wrap items-center gap-4 mb-4 text-sm text-muted-foreground">
             {product.average_rating ? <span className="flex items-center gap-1"><Star className="w-4 h-4 text-amber-500 fill-current" /><strong className="text-foreground">{product.average_rating}</strong>{product.rating_count ? ` (${product.rating_count.toLocaleString("en-IN")} ratings)` : ""}</span> : null}
             <span>{product.exact_offer_count} exact-match offer{product.exact_offer_count === 1 ? "" : "s"}{product.offer_count > product.exact_offer_count ? ` · ${product.offer_count - product.exact_offer_count} variant/similar` : ""}</span>

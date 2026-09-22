@@ -11,6 +11,7 @@ import Spinner from "@/components/ui/Spinner";
 import ErrorBox from "@/components/ui/ErrorBox";
 import type { ProductSearchResult, SearchResponse } from "@/lib/types";
 import { downscaleImage, PENDING_PHOTO_KEY } from "@/lib/photo";
+import FamilyPanel from "@/components/product/FamilyPanel";
 import { track } from "@/lib/analytics";
 
 function ProductCard({ product, visual = false }: { product: ProductSearchResult; visual?: boolean }) {
@@ -192,6 +193,8 @@ function SearchContent() {
         </div>
       )}
 
+      {!loading && shown?.family && <FamilyPanel family={shown.family} compact />}
+      {!loading && shown?.family && shown.results.length > 0 && <h2 className="text-sm font-medium text-muted-foreground mb-3">All listings</h2>}
       {loading && <Spinner label={photoMode ? "Looking for this product…" : "Searching retailers…"} className="py-10 justify-center" />}
       {error && <ErrorBox message={error} />}
       {!loading && !error && shown && shown.results.length === 0 && (

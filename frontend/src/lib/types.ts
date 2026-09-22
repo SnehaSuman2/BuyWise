@@ -33,6 +33,59 @@ export interface ProductSearchResult {
   hint?: string | null;
 }
 
+export interface FamilyOffer {
+  offer_id: string;
+  product_id: string;
+  retailer_id: string;
+  retailer_name: string;
+  seller_name?: string | null;
+  storage?: string | null;
+  color?: string | null;
+  condition: string;
+  price: number;
+  listed_price: number;
+  shipping_known: boolean;
+  final_price_known: boolean;
+  availability: string;
+  delivery_text?: string | null;
+  delivery_days?: number | null;
+  trust_score?: number | null;
+  go_url: string;
+  observed_at: string;
+  is_demo: boolean;
+  /** Priced far above the other stores for the same variant (judged only against them). */
+  above_market: boolean;
+}
+
+export interface FamilyVariant {
+  storage?: string | null;
+  label: string;
+  colors: string[];
+  product_ids: string[];
+  offer_count: number;
+  retailer_count: number;
+  lowest_price?: number | null;
+  highest_price?: number | null;
+  typical_price?: number | null;
+  offers: FamilyOffer[];
+}
+
+/** One product line ("iPhone 17"): its storage sizes, colours and every store's price. */
+export interface ProductFamily {
+  line: string;
+  label: string;
+  brand?: string | null;
+  image?: string | null;
+  variants: FamilyVariant[];
+  selected_storage?: string | null;
+  total_offers: number;
+  total_retailers: number;
+  product_count: number;
+  is_demo: boolean;
+  locked?: boolean;
+  hint?: string | null;
+}
+
 export interface SearchResponse {
   query?: string | null;
   query_type: "text" | "url" | "image";
@@ -42,6 +95,8 @@ export interface SearchResponse {
   page: number;
   page_size: number;
   results: ProductSearchResult[];
+  /** Present when the query names a product line: every variant and store in one place. */
+  family?: ProductFamily | null;
   meta: DataMeta;
 }
 
@@ -78,6 +133,8 @@ export interface ProductDetail {
   rating_count?: number | null;
   meta?: DataMeta | null;
   locked?: boolean;
+  family_line?: string | null;
+  family_label?: string | null;
 }
 
 export interface Retailer {

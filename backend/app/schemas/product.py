@@ -62,6 +62,9 @@ class ProductDetail(ProductResponse):
     average_rating: float | None = None
     rating_count: int | None = None
     locked: bool = False  # prices withheld: part of Pro
+    # The line this product belongs to, for the "every storage and store" view.
+    family_line: str | None = None
+    family_label: str | None = None
     meta: DataMeta | None = None
 
 

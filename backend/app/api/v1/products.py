@@ -9,6 +9,7 @@ from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.security import get_optional_user
 from app.schemas.common import DataMeta
+from app.schemas.family import ProductFamily
 from app.schemas.offer import OfferComparison
 from app.schemas.price import PriceHistoryResponse, PriceSignalResponse
 from app.schemas.product import ProductDetail, ProductVariantResponse
@@ -16,8 +17,10 @@ from app.schemas.recommendation import RecommendationSet
 from app.schemas.review import ReviewAnalysisResponse
 from app.schemas.trust import TrustScoreResponse
 from app.services import catalog
+from app.services.family_service import FamilyService
 from app.services.offer_service import OfferService
 from app.services.price_history_service import PriceHistoryService
+from app.services.product_normalizer import extract_attributes
 from app.services.recommendation_engine import RecommendationEngine
 from app.services.review_analyzer import ReviewAnalyzer
 from app.services.subscription_service import entitlements_for
@@ -25,6 +28,21 @@ from app.services.trust_service import TrustService
 
 router = APIRouter(prefix="/products", tags=["products"])
 settings = get_settings()
+
+
+@router.get("/family", response_model=ProductFamily)
+async def get_product_family(
+    line: str = Query(..., min_length=2, max_length=60),
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_optional_user),
+):
+    """Every storage size, colour and store for one product line ("iphone17")."""
+    see_prices = (await entitlements_for(db, user)).see_prices
+    token = "".join(ch for ch in line.lower() if ch.isalnum() or ch == "+")
+    family = await FamilyService(db).build(token, see_prices=see_prices)
+    if family is None:
+        raise HTTPException(status_code=404, detail="No products known for this line yet")
+    return family
 
 
 @router.get("/{product_id}", response_model=ProductDetail)
@@ -40,7 +58,10 @@ async def get_product(
     prices = [float(o.estimated_final_price) for o in (exact or offers)]
     ratings = [(float(o.rating), o.rating_count or 1) for o in offers if o.rating]
     is_demo = product.is_demo or (bool(offers) and all(o.is_demo for o in offers))
+    line = extract_attributes(product.name, None, product.brand)
     return ProductDetail(
+        family_line=line.line if not line.is_accessory else None,
+        family_label=line.line_label if not line.is_accessory else None,
         id=product.id,
         name=product.name,
         brand=product.brand,

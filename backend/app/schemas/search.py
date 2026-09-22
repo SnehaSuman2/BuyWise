@@ -5,6 +5,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from app.schemas.common import DataMeta
+from app.schemas.family import ProductFamily
 from app.schemas.product import ProductSearchResult
 
 
@@ -29,4 +30,7 @@ class SearchResponse(BaseModel):
     page: int
     page_size: int
     results: list[ProductSearchResult] = []
+    # When the query names a product line, every variant and retailer of that
+    # line in one place. The result cards remain below it.
+    family: ProductFamily | None = None
     meta: DataMeta
