@@ -223,6 +223,97 @@ async def get_or_create_seller(
     return seller
 
 
+def product_key_for(
+    attrs: NormalizedAttributes, identifiers: dict, condition: str = "new"
+) -> tuple[str, dict]:
+    """The canonical key and identifiers a product is stored under.
+
+    One rule, used both when a product is written and when a batch of them is
+    looked up beforehand, so the two can never disagree. A used or refurbished
+    item is its own product: it shares the sealed item's key and often its ASIN.
+    """
+    key = canonical_key(attrs, identifiers)
+    if condition != "new":
+        return f"{key}:{condition}", {}
+    return key, identifiers
+
+
+@dataclass
+class Prefetched:
+    """Existing products for a batch of keys and identifiers, from two queries.
+
+    Persisting a search used to look every product up one at a time: a query by
+    key and up to three by identifier, each a round trip. For two dozen products
+    that was most of the time a search spent writing.
+    """
+
+    by_key: dict[str, Product] = field(default_factory=dict)
+    by_ident: dict[tuple[str, str], Product] = field(default_factory=dict)
+
+    def find(self, key: str, identifiers: dict) -> Product | None:
+        if key in self.by_key:
+            return self.by_key[key]
+        for kind in ("gtin", "asin", "mpn"):
+            val = identifiers.get(kind)
+            if val and (kind, val) in self.by_ident:
+                return self.by_ident[(kind, val)]
+        return None
+
+
+async def prefetch_products(db: AsyncSession, wanted: list[tuple[str, dict]]) -> Prefetched:
+    out = Prefetched()
+    keys = {k for k, _ in wanted if k}
+    if keys:
+        rows = (await db.execute(select(Product).where(Product.canonical_key.in_(keys)))).scalars()
+        for row in rows:
+            out.by_key[row.canonical_key] = row
+    idents = {
+        (kind, ids[kind]) for _, ids in wanted for kind in ("gtin", "asin", "mpn") if ids.get(kind)
+    }
+    if idents:
+        from sqlalchemy import or_
+
+        clauses = []
+        for kind in ("gtin", "asin", "mpn"):
+            values = [v for k, v in idents if k == kind]
+            if values:
+                clauses.append(getattr(Product, kind).in_(values))
+        rows = (await db.execute(select(Product).where(or_(*clauses)))).scalars()
+        for row in rows:
+            for kind in ("gtin", "asin", "mpn"):
+                val = getattr(row, kind)
+                if val:
+                    out.by_ident.setdefault((kind, val), row)
+    return out
+
+
+async def preload_retailers(db: AsyncSession, listings, cache: PersistCache) -> None:
+    """Load every retailer a batch of listings names, in one query."""
+    slugs: dict[str, dict | None] = {}
+    for listing in listings:
+        curated = resolve_retailer(listing.retailer_name, listing.retailer_domain)
+        slug = (
+            curated["slug"]
+            if curated
+            else slugify(
+                listing.retailer_domain or (listing.retailer_name or "Unknown retailer").strip()
+            )
+        )
+        slugs.setdefault(slug, curated)
+    missing = [slug for slug in slugs if slug not in cache.retailers]
+    if not missing:
+        return
+    rows = (await db.execute(select(Retailer).where(Retailer.slug.in_(missing)))).scalars()
+    for retailer in rows:
+        curated = slugs.get(retailer.slug)
+        if curated:
+            # The registry stays the source of truth for curated retailers.
+            retailer.is_curated = True
+            if retailer.policies != curated.get("policies", {}):
+                retailer.policies = curated.get("policies", {})
+        cache.retailers[retailer.slug] = retailer
+
+
 async def find_product_by_identifiers(
     db: AsyncSession, identifiers: dict[str, str]
 ) -> Product | None:
@@ -252,18 +343,17 @@ async def upsert_product(
     is_demo: bool = False,
     condition: str = "new",
     extra_attributes: dict | None = None,
+    prefetched: Prefetched | None = None,
 ) -> Product:
     identifiers = clean_identifiers(identifiers)
     attrs = attrs or extract_attributes(title, specifications, brand)
-    key = canonical_key(attrs, identifiers)
-    if condition != "new":
-        # A refurbished or used item is its own product. It shares the sealed
-        # item's model, storage, colour and often its ASIN, so without this it
-        # would be found by key or identifier and merged into the sealed product.
-        key = f"{key}:{condition}"
-        identifiers = {}
+    key, identifiers = product_key_for(attrs, identifiers, condition)
 
     async def _find_existing() -> Product | None:
+        if prefetched is not None:
+            found = prefetched.find(key, identifiers)
+            if found is not None:
+                return found
         result = await db.execute(select(Product).where(Product.canonical_key == key))
         found = result.scalar_one_or_none()
         if found is None:

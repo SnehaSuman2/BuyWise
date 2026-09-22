@@ -653,14 +653,18 @@ class SearchService:
         if limit <= 0 or registry.offers_enricher() is None:
             return results
         candidates = []
+        snapshot = getattr(self, "_persisted_attrs", {})
         for r in results:
             if len(candidates) >= limit:
                 break
-            if r.offer_count <= 1:
+            if r.offer_count > 1:
+                continue
+            attrs = snapshot.get(r.id)
+            if attrs is None:
                 product = await catalog.load_product(self.db, r.id)
                 attrs = (product.attributes if product else None) or {}
-                if product and attrs.get("multiple_sources") and not attrs.get("enriched_at"):
-                    candidates.append((r, product))
+            if attrs.get("multiple_sources") and not attrs.get("enriched_at"):
+                candidates.append((r, r.id))
         if not candidates:
             return results
         # Each lookup runs in its own session so it can finish after this request
@@ -668,7 +672,7 @@ class SearchService:
         # merges that; the rest lands on the product page when it is opened.
         # Commit first: a product created moments ago in this session does not
         # exist yet for a session of its own.
-        pending_ids = [(r, p.id) for r, p in candidates]
+        pending_ids = list(candidates)
         await self.db.commit()
         tasks = {
             asyncio.create_task(OfferService.enrich_in_own_session(pid)): r
@@ -811,12 +815,34 @@ class SearchService:
         seen: dict[uuid.UUID, ListingGroup] = {}
         cache = catalog.PersistCache()
         planned: list[tuple[ListingGroup, Product, bool]] = []
-        for group in groups[:24]:
-            ref_listing = group.listings[0][0]
+        groups = groups[:24]
+
+        # Everything this batch might already have, in a handful of queries: the
+        # products by key and identifier, and the retailers by slug.
+        wanted = []
+        group_identifiers: dict[int, dict] = {}
+        for group in groups:
             identifiers = dict(group.reference.identifiers)
             for listing, _ in group.listings:
                 for k, v in catalog.clean_identifiers(listing.identifiers).items():
                     identifiers.setdefault(k, v)
+            group_identifiers[id(group)] = identifiers
+            ref_listing = group.listings[0][0]
+            wanted.append(
+                catalog.product_key_for(
+                    group.reference.attrs,
+                    catalog.clean_identifiers(identifiers),
+                    ref_listing.condition or "new",
+                )
+            )
+        prefetched = await catalog.prefetch_products(self.db, wanted)
+        await catalog.preload_retailers(
+            self.db, [listing for group in groups for listing, _ in group.listings], cache
+        )
+
+        for group in groups:
+            ref_listing = group.listings[0][0]
+            identifiers = group_identifiers[id(group)]
             attached = (
                 reference_product is not None
                 and group.reference_match is not None
@@ -843,6 +869,7 @@ class SearchService:
                     source_url=ref_listing.url,
                     is_demo=all(l.is_demo for l, _ in group.listings),
                     condition=ref_listing.condition or "new",
+                    prefetched=prefetched,
                     extra_attributes={
                         "multiple_sources": any(l.multiple_sources for l, _ in group.listings),
                         "enrichment_token": next(
@@ -854,6 +881,9 @@ class SearchService:
                 )
             group.product = product
             planned.append((group, product, attached))
+        # A snapshot for the enrichment step: after the commit it triggers, these
+        # instances are expired and cannot be read without a lazy refresh.
+        self._persisted_attrs = {p.id: dict(p.attributes or {}) for _, p, _ in planned}
 
         # Every product's variant and existing offers in two queries, then the
         # offers themselves with one flush for all of them and one for their price
