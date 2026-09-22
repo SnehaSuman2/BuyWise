@@ -134,6 +134,13 @@ class Settings(BaseSettings):
     # Set automatically by Render for web services; used when API_PUBLIC_URL is unset.
     RENDER_EXTERNAL_URL: str = ""
 
+    # --- Serper.dev: a second search-data vendor ---
+    # Independent of the SerpApi key and quota, so one running dry does not leave
+    # the site with nothing to show. Serper answers Google Shopping and Google web
+    # search; it has no Amazon engine and no immersive-product token, so SerpApi
+    # stays first in the chain whenever it has credit.
+    SERPER_API_KEY: str = ""
+
     SERPAPI_API_KEY: str = ""
     SERPAPI_TIMEOUT_SECONDS: float = 20.0
     SERPAPI_MAX_RETRIES: int = 2
@@ -264,6 +271,15 @@ class Settings(BaseSettings):
         if self.active_search_provider == "searchapi":
             return bool(self.SEARCHAPI_API_KEY)
         return bool(self.SERPAPI_API_KEY)
+
+    @property
+    def serper_enabled(self) -> bool:
+        return bool(self.SERPER_API_KEY)
+
+    @property
+    def any_search_vendor_enabled(self) -> bool:
+        """Whether any vendor can answer a search at all."""
+        return self.search_api_enabled or self.serper_enabled
 
     @property
     def serpapi_enabled(self) -> bool:

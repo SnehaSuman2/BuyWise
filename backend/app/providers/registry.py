@@ -17,6 +17,7 @@ from app.providers.base import (
     TrustEvidenceProvider,
     WebSearchProvider,
 )
+from app.providers.chain import ChainedProductSearchProvider, ChainedWebSearchProvider
 from app.providers.demo.evidence import DemoTrustEvidenceProvider
 from app.providers.demo.search import (
     DemoImageSearchProvider,
@@ -33,6 +34,9 @@ from app.providers.serpapi.google_product import GoogleProductProvider
 from app.providers.serpapi.google_reverse_image import GoogleReverseImageProvider
 from app.providers.serpapi.google_search import GoogleSearchProvider
 from app.providers.serpapi.google_shopping import GoogleShoppingProvider
+from app.providers.serper.google_lens import SerperLensProvider
+from app.providers.serper.google_search import SerperWebSearchProvider
+from app.providers.serper.google_shopping import SerperShoppingProvider
 from app.providers.trust.google_search_evidence import GoogleSearchEvidenceProvider
 from app.providers.trust.trustpilot import TrustpilotProvider
 
@@ -41,9 +45,21 @@ if TYPE_CHECKING:  # pragma: no cover
 
 
 def product_search_providers() -> list[ProductSearchProvider]:
-    """Ordered by priority. Text search uses the first; others are fallbacks."""
-    live = [p for p in (GoogleShoppingProvider(), BingShoppingProvider()) if p.enabled]
-    return live or [DemoProductSearchProvider()]
+    """The shopping sources, as one provider that tries them in order.
+
+    A single chained provider rather than a list, because the search layer calls
+    every provider it is given at once. Two vendors asked in parallel would spend
+    two quotas to answer one question; asked in order, the second is only reached
+    when the first has nothing.
+    """
+    live = [
+        p
+        for p in (GoogleShoppingProvider(), SerperShoppingProvider(), BingShoppingProvider())
+        if p.enabled
+    ]
+    if not live:
+        return [DemoProductSearchProvider()]
+    return [ChainedProductSearchProvider(live)]
 
 
 def retailer_search_providers() -> list[RetailerSearchProvider]:
@@ -70,13 +86,20 @@ def offers_enricher() -> "GoogleOffersEnricher | None":
 
 
 def image_search_providers() -> list[ImageSearchProvider]:
-    live = [p for p in (GoogleLensProvider(), GoogleReverseImageProvider()) if p.enabled]
+    # Tried in order; the search layer stops at the first that finds anything.
+    live = [
+        p
+        for p in (GoogleLensProvider(), SerperLensProvider(), GoogleReverseImageProvider())
+        if p.enabled
+    ]
     return live or [DemoImageSearchProvider()]
 
 
 def web_search_provider() -> WebSearchProvider | None:
-    p = GoogleSearchProvider()
-    return p if p.enabled else None
+    live = [p for p in (GoogleSearchProvider(), SerperWebSearchProvider()) if p.enabled]
+    if not live:
+        return None
+    return live[0] if len(live) == 1 else ChainedWebSearchProvider(live)
 
 
 def trust_evidence_providers() -> list[TrustEvidenceProvider]:
@@ -102,10 +125,14 @@ def provider_status() -> dict:
         "google_images": GoogleImagesProvider().enabled,
         "bing_shopping": BingShoppingProvider().enabled,
         "google_reverse_image": GoogleReverseImageProvider().enabled,
+        "serper_shopping": SerperShoppingProvider().enabled,
+        "serper_search": SerperWebSearchProvider().enabled,
+        "serper_lens": SerperLensProvider().enabled,
     }
     return {
         "data_mode": s.data_mode,
         "serpapi_configured": s.serpapi_enabled,
+        "serper_configured": s.serper_enabled,
         "engines": engines,
         "trust_evidence": [p.name for p in trust_evidence_providers()],
         "trustpilot": TrustpilotProvider().enabled,

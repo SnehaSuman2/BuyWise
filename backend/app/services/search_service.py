@@ -534,16 +534,20 @@ class SearchService:
             for p in registry.retailer_search_providers()
         ]
         results = await asyncio.gather(*[c for _, c in shopping + amazon], return_exceptions=True)
+        # One source failing while another answers is not news the shopper can act
+        # on, and saying so on a page full of results only makes the site look
+        # broken. These are held back unless nothing was found at all.
+        soft_warnings: list[str] = []
         for (provider, _), res in zip(shopping + amazon, results, strict=True):
             providers_used.append(f"{provider.name}:{provider.engine}")
             if isinstance(res, BaseException):
-                warnings.append(f"{provider.engine} temporarily unavailable.")
+                soft_warnings.append(f"{provider.engine} temporarily unavailable.")
                 failures.append(f"{provider.engine}: {type(res).__name__}")
                 continue
             cached = cached or res.cached
             stale = stale or res.stale
             if not res.ok:
-                warnings.append(f"{provider.engine} temporarily unavailable.")
+                soft_warnings.append(f"{provider.engine} temporarily unavailable.")
                 failures.append(res.error or provider.engine)
                 continue
             listings.extend(res.items)
@@ -554,6 +558,8 @@ class SearchService:
             priced = [l for l in priced if l.price >= min_price]
         if max_price is not None:
             priced = [l for l in priced if l.price <= max_price]
+        if not priced:
+            warnings.extend(soft_warnings)
         unavailable = None
         if not priced and failures and not listings:
             unavailable = "; ".join(str(f) for f in failures)[:200]
