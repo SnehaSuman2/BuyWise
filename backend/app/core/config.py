@@ -165,8 +165,9 @@ class Settings(BaseSettings):
     RAZORPAY_KEY_ID: str = ""
     RAZORPAY_KEY_SECRET: str = ""
     RAZORPAY_WEBHOOK_SECRET: str = ""
-    PRO_MONTHLY_PRICE_INR: int = 199
-    PRO_YEARLY_PRICE_INR: int = 1499
+    PRO_MONTHLY_PRICE_INR: int = 99
+    PRO_HALFYEARLY_PRICE_INR: int = 449
+    PRO_YEARLY_PRICE_INR: int = 799
 
     # --- Email ---
     EMAIL_PROVIDER: Literal["auto", "resend", "console"] = "auto"

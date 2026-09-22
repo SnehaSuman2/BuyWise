@@ -431,6 +431,10 @@ export interface PlanInfo {
   price_inr: number;
   period_days: number;
   features: string[];
+  /** Worked out server-side; the page never does arithmetic on prices. */
+  monthly_equivalent_inr?: number | null;
+  savings_percent?: number | null;
+  is_best_value: boolean;
 }
 
 export interface SubscriptionStatus {

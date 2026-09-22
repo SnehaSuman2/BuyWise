@@ -48,6 +48,28 @@ def plans() -> list[PlanInfo]:
         "Deeper trust reports with evidence",
         "Priority AI shopping agent",
     ]
+    monthly = s.PRO_MONTHLY_PRICE_INR
+
+    def per_month(price: int, days: int) -> float:
+        return round(price / (days / 30), 2)
+
+    def saving(price: int, days: int) -> int:
+        """How much less per month than paying monthly, rounded down.
+
+        Rounded down so the number on the page is never larger than the saving
+        actually is.
+        """
+        if not monthly:
+            return 0
+        return int((1 - per_month(price, days) / monthly) * 100)
+
+    paid = [
+        ("pro_monthly", "Pro Monthly", s.PRO_MONTHLY_PRICE_INR, 30),
+        ("pro_6month", "Pro 6 Months", s.PRO_HALFYEARLY_PRICE_INR, 180),
+        ("pro_yearly", "Pro Yearly", s.PRO_YEARLY_PRICE_INR, 365),
+    ]
+    best = max(paid, key=lambda plan: saving(plan[2], plan[3]))[0]
+
     return [
         PlanInfo(
             id="free",
@@ -61,20 +83,23 @@ def plans() -> list[PlanInfo]:
                 "AI shopping agent",
             ],
         ),
-        PlanInfo(
-            id="pro_monthly",
-            name="Pro Monthly",
-            price_inr=s.PRO_MONTHLY_PRICE_INR,
-            period_days=30,
-            features=features_pro,
-        ),
-        PlanInfo(
-            id="pro_yearly",
-            name="Pro Yearly",
-            price_inr=s.PRO_YEARLY_PRICE_INR,
-            period_days=365,
-            features=features_pro + ["2 months free vs monthly"],
-        ),
+        *[
+            PlanInfo(
+                id=plan_id,
+                name=name,
+                price_inr=price,
+                period_days=days,
+                features=(
+                    features_pro
+                    if days == 30
+                    else features_pro + [f"Saves {saving(price, days)}% against paying monthly"]
+                ),
+                monthly_equivalent_inr=per_month(price, days),
+                savings_percent=saving(price, days) or None,
+                is_best_value=plan_id == best,
+            )
+            for plan_id, name, price, days in paid
+        ],
     ]
 
 

@@ -14,6 +14,11 @@ class PlanInfo(BaseModel):
     price_inr: int
     period_days: int
     features: list[str]
+    # Worked out on the server so the page never does arithmetic on prices and
+    # never shows a saving that is not real.
+    monthly_equivalent_inr: float | None = None
+    savings_percent: int | None = None
+    is_best_value: bool = False
 
 
 class SubscriptionResponse(BaseModel):
@@ -28,7 +33,11 @@ class SubscriptionResponse(BaseModel):
 
 
 class CreateOrderRequest(BaseModel):
-    plan: str = Field(..., pattern="^(pro_monthly|pro_yearly)$")
+    # Deliberately not a pattern listing the plan ids: one drifted out of date the
+    # moment a plan was added and the new plan was rejected here rather than
+    # anywhere obvious. plans() is the single source of truth, and
+    # subscription_service.plan_by_id rejects anything it does not contain.
+    plan: str = Field(..., min_length=1, max_length=40)
 
 
 class CreateOrderResponse(BaseModel):
