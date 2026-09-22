@@ -1,21 +1,39 @@
 # Render's free tier shuts the API instance down after 15 idle minutes and boots it
-# on the next request, which can take minutes and looks to a visitor like a dead
-# backend. A health ping every 10 minutes keeps it awake. This is a stopgap: the
-# proper fix is a paid instance, which never sleeps. Scheduled runs can be delayed
-# by GitHub, so an occasional cold start is still possible. No secrets needed.
+# on the next request, which takes long enough to look like a dead backend.
+#
+# A single ping per scheduled run does not work. GitHub throttles cron on free
+# runners hard: this workflow asked for every 10 minutes and was granted roughly
+# one run every 4.7 hours, so the instance slept through most of the day. Each run
+# therefore pings for the best part of an hour instead of once, which covers the
+# gap whenever a trigger is granted.
+#
+# This is still a stopgap, and it cannot guarantee the instance is awake. The
+# reliable fixes are an external uptime monitor on a 5-minute interval, or a paid
+# instance that never sleeps. No secrets are needed here.
 name: Keep API warm
 
 on:
   schedule:
-    - cron: "*/10 * * * *"
+    - cron: "*/15 * * * *"
   workflow_dispatch:
+
+# A newer run replaces an older one rather than stacking runners on top of it.
+concurrency:
+  group: keep-warm
+  cancel-in-progress: true
 
 jobs:
   ping:
     runs-on: ubuntu-latest
+    timeout-minutes: 55
     steps:
-      - name: Ping health endpoint (long timeout so a cold start completes)
+      - name: Ping health every 5 minutes for 50 minutes
         run: |
-          curl --silent --show-error --max-time 240 \
-            -o /dev/null -w "HTTP %{http_code} in %{time_total}s\n" \
-            https://buywise-api-vaai.onrender.com/health
+          URL="https://buywise-api-vaai.onrender.com/health"
+          for i in $(seq 1 10); do
+            # A long timeout so a cold start is waited out rather than abandoned.
+            curl --silent --show-error --max-time 240 \
+              -o /dev/null -w "ping $i: HTTP %{http_code} in %{time_total}s\n" \
+              "$URL" || echo "ping $i: failed (will retry)"
+            [ "$i" -lt 10 ] && sleep 300
+          done
