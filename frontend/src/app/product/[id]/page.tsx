@@ -6,6 +6,7 @@ import { serverGet } from "@/lib/api";
 import { formatPrice, getPriceActionColor, priceActionLabel } from "@/lib/utils";
 import DataBadge from "@/components/ui/DataBadge";
 import ComparisonSections from "@/components/product/ComparisonSections";
+import ProductGallery from "@/components/product/ProductGallery";
 import LockedPanel from "@/components/product/LockedPanel";
 import PriceHistoryChart from "@/components/product/PriceHistoryChart";
 import ProductActions from "@/components/product/ProductActions";
@@ -55,8 +56,8 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
       {jsonLd && <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />}
 
       <section className="grid grid-cols-1 md:grid-cols-5 gap-8 mb-12 animate-fade-in">
-        <div className="md:col-span-2 aspect-square rounded-2xl overflow-hidden bg-muted/20 glass">
-                    <img src={product.images?.[0] || "https://placehold.co/600x600/1a1a2e/e0e0e0?text=No+image"} alt={product.name} className="w-full h-full object-cover" />
+        <div className="md:col-span-2">
+          <ProductGallery images={product.images || []} name={product.name} />
         </div>
         <div className="md:col-span-3 flex flex-col justify-center">
           <div className="flex flex-wrap items-center gap-2 mb-2">

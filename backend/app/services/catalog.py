@@ -33,6 +33,28 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+MAX_PRODUCT_IMAGES = 6
+
+
+def dedupe_images(urls) -> list[str]:
+    """Distinct http(s) image URLs, first seen first, capped.
+
+    Order matters: whichever shop was seen first supplies the hero image, so a
+    product's main photo does not change every time another retailer is found.
+    """
+    out: list[str] = []
+    for url in urls:
+        if not url or not isinstance(url, str):
+            continue
+        url = url.strip()
+        if not url.startswith(("http://", "https://")) or url in out:
+            continue
+        out.append(url)
+        if len(out) >= MAX_PRODUCT_IMAGES:
+            break
+    return out
+
+
 def clean_identifiers(identifiers: dict | None) -> dict[str, str]:
     out = {}
     for k, v in (identifiers or {}).items():
@@ -424,6 +446,7 @@ async def upsert_product(
     brand: str | None = None,
     category: str | None = None,
     image_url: str | None = None,
+    image_urls: list[str] | None = None,
     description: str | None = None,
     specifications: dict | None = None,
     source_provider: str = "unknown",
@@ -444,6 +467,10 @@ async def upsert_product(
     identifiers = clean_identifiers(identifiers)
     attrs = attrs or extract_attributes(title, specifications, brand)
     key, identifiers = product_key_for(attrs, identifiers, condition)
+    # Each shop selling the same item publishes its own photograph, often from a
+    # different angle. Only the first was ever kept, and the rest were dropped on
+    # the floor; together they are a real gallery that costs no extra request.
+    candidate_images = dedupe_images([image_url, *(image_urls or [])])
 
     async def _find_existing() -> Product | None:
         if prefetched is not None:
@@ -470,7 +497,7 @@ async def upsert_product(
             asin=identifiers.get("asin"),
             attributes=attrs.as_dict(),
             specifications=specifications or {},
-            images=[image_url] if image_url else [],
+            images=candidate_images,
             normalized_name=attrs.clean_title[:500],
             line=attrs.line,
             canonical_key=key,
@@ -528,8 +555,11 @@ async def upsert_product(
             product.attributes = merged
     if not created:
         # enrich missing fields without overwriting known data
-        if image_url and not product.images:
-            product.images = [image_url]
+        if candidate_images:
+            merged = dedupe_images([*(product.images or []), *candidate_images])
+            if merged != (product.images or []):
+                # The first image stays the hero; later shops only ever append.
+                product.images = merged
         if attrs.line and product.line != attrs.line:
             product.line = attrs.line
         for field, val in (

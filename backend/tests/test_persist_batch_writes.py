@@ -164,3 +164,62 @@ def test_enrichment_attempt_window():
     assert not OfferService.enrichment_attempted_recently(
         {"enrich_attempted_at": "junk"}, timedelta(minutes=30)
     )
+
+
+@pytest.mark.asyncio
+async def test_every_shop_photo_is_kept_not_just_the_first(client, db, admin_headers, monkeypatch):
+    """Each shop publishes its own picture of the same item; together they are a
+    gallery. Only the first used to be stored and the rest were discarded."""
+    google = FakeSearch(
+        [
+            listing(
+                "Bose QuietComfort Ultra Headphones Black",
+                "Croma",
+                "croma.com",
+                29990,
+                image_url="https://img.croma/qc-ultra-front.jpg",
+            ),
+            listing(
+                "Bose QuietComfort Ultra Headphones Black",
+                "Flipkart",
+                "flipkart.com",
+                28990,
+                image_url="https://img.flipkart/qc-ultra-side.jpg",
+            ),
+            listing(
+                "Bose QuietComfort Ultra Headphones Black",
+                "Vijay Sales",
+                "vijaysales.com",
+                30990,
+                image_url="https://img.croma/qc-ultra-front.jpg",  # the same photo again
+            ),
+        ]
+    )
+    monkeypatch.setattr(registry, "product_search_providers", lambda: [google])
+    monkeypatch.setattr(registry, "retailer_search_providers", lambda: [FakeAmazon()])
+    monkeypatch.setattr(get_settings(), "SEARCH_ENRICH_LIMIT", 0)
+    r = await client.post(
+        "/api/v1/search", headers=admin_headers, json={"query": "bose quietcomfort ultra"}
+    )
+    assert r.status_code == 200, r.text
+    card = next(x for x in r.json()["results"] if "Ultra" in x["name"])
+    product = await catalog.load_product(db, uuid.UUID(card["id"]))
+    assert product is not None
+    assert product.images == [
+        "https://img.croma/qc-ultra-front.jpg",
+        "https://img.flipkart/qc-ultra-side.jpg",
+    ], product.images
+
+
+def test_image_list_is_deduped_bounded_and_http_only():
+    from app.services.catalog import MAX_PRODUCT_IMAGES, dedupe_images
+
+    assert dedupe_images(["https://a/1.jpg", "https://a/1.jpg", None, "", "https://a/2.jpg"]) == [
+        "https://a/1.jpg",
+        "https://a/2.jpg",
+    ]
+    # Nothing that is not a fetchable image URL may reach the page.
+    assert dedupe_images(["data:image/png;base64,xxx", "/local/path.jpg", 42]) == []
+    assert len(dedupe_images([f"https://a/{i}.jpg" for i in range(20)])) == MAX_PRODUCT_IMAGES
+    # The hero must not move when another shop turns up later.
+    assert dedupe_images(["https://a/1.jpg", "https://a/9.jpg"])[0] == "https://a/1.jpg"
