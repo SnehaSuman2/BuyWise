@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Bell, Trash2, Target, Pause, Play, CheckCircle2, Search } from "lucide-react";
+import { Bell, Trash2, Target, Pause, Play, CheckCircle2, Search, ArrowUpRight } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { formatPrice, formatRelativeTime } from "@/lib/utils";
@@ -52,16 +52,21 @@ export default function AlertsPage() {
             return (
               <div key={alert.id} className={`glass rounded-2xl p-5 animate-slide-up ${!alert.is_active ? "opacity-60" : ""}`} style={{ animationDelay: `${i * 0.06}s`, opacity: 0, animationFillMode: "forwards" }}>
                 <div className="flex items-start gap-4">
-                                    <img src={alert.product_image || "https://placehold.co/80x80/1a1a2e/e0e0e0?text=?"} alt="" className="w-16 h-16 rounded-xl object-cover" />
+                  <Link href={`/product/${alert.product_id}`} className="shrink-0" aria-label={`Open ${alert.product_name || "product"}`}>
+                    <img src={alert.product_image || "https://placehold.co/80x80/1a1a2e/e0e0e0?text=?"} alt="" className="w-16 h-16 rounded-xl object-cover hover:opacity-80 transition-opacity" />
+                  </Link>
                   <div className="flex-1 min-w-0">
-                    <Link href={`/product/${alert.product_id}`} className="font-semibold text-sm mb-1 block truncate hover:text-indigo-500">{alert.product_name || "Product"}</Link>
+                    <Link href={`/product/${alert.product_id}`} className="font-semibold text-sm mb-1 flex items-center gap-1 text-indigo-400 hover:text-indigo-300 transition-colors"><span className="truncate">{alert.product_name || "Product"}</span><ArrowUpRight className="w-3.5 h-3.5 shrink-0" /></Link>
                     <div className="flex items-center gap-4 mb-3 flex-wrap text-sm">
                       <div><div className="text-xs text-muted-foreground">{alert.alert_type === "target_price" ? "Target" : `Drop ${alert.drop_percent}% from ${formatPrice(alert.baseline_price)}`}</div><div className="font-bold text-emerald-500 flex items-center gap-1"><Target className="w-3 h-3" />{goal ? formatPrice(goal) : "—"}</div></div>
                       <div><div className="text-xs text-muted-foreground">Current lowest</div><div className="font-bold">{alert.current_lowest_price ? formatPrice(alert.current_lowest_price) : "—"}</div></div>
                       {alert.is_triggered ? <div className="text-emerald-500 font-medium flex items-center gap-1"><CheckCircle2 className="w-4 h-4" /> Target met{alert.triggered_at ? ` ${formatRelativeTime(alert.triggered_at)}` : ""}</div> : gap && gap > 0 ? <div><div className="text-xs text-muted-foreground">Gap</div><div className="font-medium text-amber-500">{formatPrice(gap)} away</div></div> : null}
                     </div>
                     <div className="h-1.5 bg-muted rounded-full overflow-hidden"><div className="h-full bg-gradient-to-r from-indigo-500 to-emerald-500 rounded-full transition-all duration-1000" style={{ width: `${progress}%` }} /></div>
-                    <div className="text-[11px] text-muted-foreground mt-2">{alert.is_active ? "Active" : "Paused"} · checked {alert.last_checked_at ? formatRelativeTime(alert.last_checked_at) : "not yet"} · via {alert.notification_method}</div>
+                    <div className="text-[11px] text-muted-foreground mt-2 flex items-center gap-2 flex-wrap">
+                      <span>{alert.is_active ? "Active" : "Paused"} · checked {alert.last_checked_at ? formatRelativeTime(alert.last_checked_at) : "not yet"} · via {alert.notification_method}</span>
+                      <Link href={`/product/${alert.product_id}`} className="text-indigo-400 hover:text-indigo-300 font-medium">See offers and price history</Link>
+                    </div>
                   </div>
                   <div className="flex flex-col gap-1">
                     <button onClick={() => toggle(alert)} className="p-2 rounded-lg hover:bg-muted text-muted-foreground" aria-label={alert.is_active ? "Pause alert" : "Resume alert"}>{alert.is_active ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}</button>
