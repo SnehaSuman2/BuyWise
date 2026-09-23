@@ -1,18 +1,17 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Star, TrendingDown, TrendingUp, Minus, Shield, ThumbsUp, ThumbsDown, MessagesSquare, Lock } from "lucide-react";
+import { Star, Shield, ThumbsUp, ThumbsDown, MessagesSquare } from "lucide-react";
 import { serverGet } from "@/lib/api";
-import { formatPrice, getPriceActionColor, priceActionLabel } from "@/lib/utils";
+import { formatPrice } from "@/lib/utils";
 import DataBadge from "@/components/ui/DataBadge";
 import ComparisonSections from "@/components/product/ComparisonSections";
+import PriceHistorySection from "@/components/product/PriceHistorySection";
+import ProductHeroPrice from "@/components/product/ProductHeroPrice";
 import ProductGallery from "@/components/product/ProductGallery";
-import LockedPanel from "@/components/product/LockedPanel";
-import PriceHistoryChart from "@/components/product/PriceHistoryChart";
-import ProductActions from "@/components/product/ProductActions";
 import TrustScoreCard from "@/components/trust/TrustScoreCard";
 import CommunityReviews from "@/components/community/CommunityReviews";
-import type { OfferComparison, PriceHistoryData, ProductDetail, RecommendationSet, ReviewAnalysis, TrustScoreData } from "@/lib/types";
+import type { ProductDetail, ReviewAnalysis, TrustScoreData } from "@/lib/types";
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 
@@ -32,23 +31,19 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
 
 export default async function ProductPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const [product, offers, history, recs, trusts, reviews] = await Promise.all([
+  // Only what the page shell needs. Offers, recommendations and price history
+  // are all fetched in the browser, where the reader's token exists: fetching
+  // them here as well cost seconds and returned a withheld answer regardless.
+  const [product, trusts, reviews] = await Promise.all([
     serverGet<ProductDetail>(`/products/${id}`),
-    serverGet<OfferComparison>(`/products/${id}/offers`),
-    serverGet<PriceHistoryData>(`/products/${id}/history?days=90`),
-    serverGet<RecommendationSet>(`/products/${id}/recommendations`),
     serverGet<TrustScoreData[]>(`/products/${id}/trust`),
     serverGet<ReviewAnalysis>(`/products/${id}/reviews`),
   ]);
   if (!product) notFound();
 
-  const signal = history?.signal ?? null;
-  const lowest = offers?.lowest_final_price ?? product.lowest_price ?? null;
-  const SignalIcon = signal?.action === "BUY_NOW" ? TrendingDown : signal?.action === "WAIT" ? TrendingUp : Minus;
 
   const jsonLd = !product.is_demo ? {
     "@context": "https://schema.org", "@type": "Product", name: product.name, brand: product.brand ? { "@type": "Brand", name: product.brand } : undefined, image: product.images, sku: product.mpn || undefined, gtin: product.gtin || undefined,
-    offers: offers?.offers.filter((o) => o.match.match_type === "exact_match").map((o) => ({ "@type": "Offer", price: o.price.estimated_final_price, priceCurrency: "INR", availability: o.availability === "out_of_stock" ? "https://schema.org/OutOfStock" : "https://schema.org/InStock", seller: { "@type": "Organization", name: o.retailer.name }, url: `${APP_URL}/product/${product.id}` })),
   } : null;
 
   return (
@@ -73,29 +68,8 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
             <span>{product.exact_offer_count} exact-match offer{product.exact_offer_count === 1 ? "" : "s"}{product.offer_count > product.exact_offer_count ? ` · ${product.offer_count - product.exact_offer_count} variant/similar` : ""}</span>
             {(product.gtin || product.mpn || product.asin) && <span className="text-xs">ID: {product.gtin || product.mpn || product.asin}</span>}
           </div>
-          {product.locked ? (
-            <div className="mb-5">
-              <div className="text-2xl font-bold mb-1 flex items-center gap-2"><Lock className="w-5 h-5 text-indigo-500" /> Prices with Pro</div>
-              <p className="text-muted-foreground text-sm">Lowest price, every retailer&apos;s offer and price history are part of BuyWise Pro. <Link href="/pricing" className="text-indigo-500 hover:underline">See plans</Link></p>
-            </div>
-          ) : (
-            <>
-              <div className="text-4xl font-bold mb-1 tabular-nums">{lowest ? formatPrice(lowest) : "No price yet"}</div>
-              <p className="text-muted-foreground text-sm mb-5">Lowest estimated final price across exact matches{product.highest_price && lowest && product.highest_price > lowest ? ` · up to ${formatPrice(product.highest_price)} elsewhere` : ""}</p>
-            </>
-          )}
+          <ProductHeroPrice initial={product} />
 
-          {signal && (
-            <div className={`glass rounded-xl p-4 border-l-4 mb-4 ${signal.action === "BUY_NOW" ? "border-emerald-500" : signal.action === "WAIT" ? "border-amber-500" : "border-muted-foreground"}`}>
-              <div className="flex items-center gap-2 mb-1">
-                <SignalIcon className={`w-5 h-5 ${getPriceActionColor(signal.action)}`} />
-                <span className={`font-bold ${getPriceActionColor(signal.action)}`}>{priceActionLabel(signal.action)}</span>
-                {signal.action !== "INSUFFICIENT_DATA" && <span className="text-xs text-muted-foreground">({Math.round(signal.confidence * 100)}% confidence)</span>}
-              </div>
-              <p className="text-sm text-muted-foreground">{signal.reasoning}</p>
-            </div>
-          )}
-          <ProductActions productId={product.id} currentPrice={lowest} />
         </div>
       </section>
 
@@ -105,38 +79,9 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
         ))}
       </nav>
 
-      <ComparisonSections productId={product.id} initialOffers={offers} initialRecs={recs} trusts={trusts} history={history} />
+      <ComparisonSections productId={product.id} initialOffers={null} initialRecs={null} trusts={trusts} />
 
-      <section id="history" className="mb-16">
-        <div className="flex flex-wrap items-center gap-3 mb-6"><h2 className="text-2xl font-bold flex items-center gap-2"><TrendingDown className="w-6 h-6 text-purple-500" /> Price history</h2>{history && <DataBadge meta={history.meta} />}</div>
-        {history?.locked ? (
-          <LockedPanel what="price history" />
-        ) : history?.stats && history.stats.observations >= 2 ? (
-          <>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-              {[
-                { label: "Current lowest", value: formatPrice(history.stats.current_price) },
-                { label: "30-day average", value: history.stats.average_30d ? formatPrice(history.stats.average_30d) : "—" },
-                { label: "90-day average", value: history.stats.average_90d ? formatPrice(history.stats.average_90d) : "—" },
-                { label: "Recorded low / high", value: `${formatPrice(history.stats.historical_low)} / ${formatPrice(history.stats.historical_high)}` },
-              ].map((s) => <div key={s.label} className="glass rounded-xl p-4 text-center"><div className="text-xs text-muted-foreground mb-1">{s.label}</div><div className="text-lg font-bold tabular-nums">{s.value}</div></div>)}
-            </div>
-            <div className="glass rounded-2xl p-4"><PriceHistoryChart data={history} /></div>
-            <p className="text-xs text-muted-foreground mt-3">{history.stats.observations} daily observations over {history.stats.span_days} days · trend: {history.stats.trend}. {history.message}</p>
-          </>
-        ) : history?.stats ? (
-          <div className="glass rounded-2xl p-6">
-            <div className="flex flex-wrap items-baseline gap-x-6 gap-y-2 mb-3">
-              <div><div className="text-xs text-muted-foreground">Price recorded</div><div className="text-2xl font-bold tabular-nums">{formatPrice(history.stats.current_price)}</div></div>
-              <div><div className="text-xs text-muted-foreground">Tracking started</div><div className="text-lg font-semibold">{history.history[0] ? new Date(history.history[0].date).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" }) : "today"}</div></div>
-            </div>
-            <p className="text-sm text-muted-foreground">{history.message}</p>
-            <p className="text-sm text-muted-foreground mt-2">Save this product or set an alert and BuyWise re-checks its price for you; a buy-or-wait signal appears once there are seven days of observations.</p>
-          </div>
-        ) : (
-          <div className="glass rounded-2xl p-6 text-sm text-muted-foreground">{history?.message || "Price history unavailable for this product."}</div>
-        )}
-      </section>
+      <PriceHistorySection productId={product.id} initial={null} />
 
       <section id="reviews" className="mb-16">
         <div className="flex flex-wrap items-center gap-3 mb-6">

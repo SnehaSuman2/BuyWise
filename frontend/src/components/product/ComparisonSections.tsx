@@ -10,7 +10,8 @@ import SafeText from "@/components/ui/SafeText";
 import OffersTable from "@/components/product/OffersTable";
 import RecommendationCards from "@/components/product/RecommendationCards";
 import LockedPanel from "@/components/product/LockedPanel";
-import type { OfferComparison, PriceHistoryData, RecommendationSet, TrustScoreData } from "@/lib/types";
+import { usePriceHistory } from "@/lib/usePriceHistory";
+import type { OfferComparison, RecommendationSet, TrustScoreData } from "@/lib/types";
 
 /**
  * The parts of a product page that depend on who is looking.
@@ -26,17 +27,16 @@ export default function ComparisonSections({
   initialOffers,
   initialRecs,
   trusts,
-  history,
 }: {
   productId: string;
   initialOffers: OfferComparison | null;
   initialRecs: RecommendationSet | null;
   trusts: TrustScoreData[] | null;
-  history: PriceHistoryData | null;
 }) {
   const { user } = useAuth();
   const [offers, setOffers] = useState(initialOffers);
   const [recs, setRecs] = useState(initialRecs);
+  const { history } = usePriceHistory(productId, 90);
 
   useEffect(() => {
     if (!user) return;
