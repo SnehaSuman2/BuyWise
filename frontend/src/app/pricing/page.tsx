@@ -159,7 +159,7 @@ export default function PricingPage() {
         </ul>
       </div>
 
-      <p className="text-xs text-muted-foreground text-center mt-6">Prices include applicable taxes unless stated otherwise at checkout.</p>
+      <p className="text-xs text-muted-foreground text-center mt-6">The price shown is the full amount you pay. Nothing is added at checkout.</p>
     </div>
   );
 }
