@@ -35,6 +35,15 @@ export function track(event: string, params: Params = {}): void {
       is_demo: params.data_mode !== "live",
     });
   }
+  if (event === "retailer_clicked"
+    && typeof params.product_id === "string" && typeof params.retailer_id === "string" && typeof params.offer_id === "string"
+    && typeof params.price === "number" && typeof params.currency === "string"
+    && (params.source === "comparison" || params.source === "recommendation") && typeof params.is_demo === "boolean") {
+    trackEvent("retailer_clicked", {
+      product_id: params.product_id, retailer_id: params.retailer_id, offer_id: params.offer_id,
+      price: params.price, currency: params.currency, source: params.source, is_demo: params.is_demo,
+    });
+  }
   if (!analyticsEnabled()) return;
   const clean: Params = {};
   for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== "") clean[k] = v;
