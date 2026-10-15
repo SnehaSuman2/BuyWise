@@ -6,6 +6,8 @@
  * what people search for and where they go, and nothing that identifies them.
  */
 
+import { trackEvent } from "./product-analytics";
+
 export const GA_ID = process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID || "";
 
 type Params = Record<string, string | number | boolean | undefined>;
@@ -22,6 +24,17 @@ export function analyticsEnabled(): boolean {
 }
 
 export function track(event: string, params: Params = {}): void {
+  // Existing search results feed the product SDKs independently of GA.
+  // Never forward search_term, URLs, or the unrestricted legacy params object.
+  if (event === "search" && (params.query_type === "text" || params.query_type === "url" || params.query_type === "image")
+    && typeof params.results === "number" && Number.isInteger(params.results) && params.results >= 0
+    && (params.data_mode === "live" || params.data_mode === "demo" || params.data_mode === "mixed")) {
+    trackEvent("search_results_viewed", {
+      query_type: params.query_type,
+      result_count: params.results,
+      is_demo: params.data_mode !== "live",
+    });
+  }
   if (!analyticsEnabled()) return;
   const clean: Params = {};
   for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== "") clean[k] = v;

@@ -17,6 +17,28 @@ function apiOrigin(): string {
 
 const isDev = process.env.NODE_ENV !== "production";
 
+function productAnalyticsOrigins(): string[] {
+  if (process.env.NEXT_PUBLIC_ANALYTICS_ENABLED !== "true") return [];
+  const origins: string[] = [];
+  const add = (value: string) => {
+    try { origins.push(new URL(value).origin); } catch { /* Invalid hosts fail closed. */ }
+  };
+  if (process.env.NEXT_PUBLIC_MIXPANEL_TOKEN) {
+    add(process.env.NEXT_PUBLIC_MIXPANEL_API_HOST || "https://api-js.mixpanel.com");
+  }
+  if (process.env.NEXT_PUBLIC_POSTHOG_KEY) {
+    add(process.env.NEXT_PUBLIC_POSTHOG_HOST || "https://us.i.posthog.com");
+    // PostHog fetches project configuration from its assets host.
+    add("https://us-assets.i.posthog.com");
+    add("https://eu-assets.i.posthog.com");
+  }
+  if (process.env.NEXT_PUBLIC_AMPLITUDE_API_KEY) {
+    add(process.env.NEXT_PUBLIC_AMPLITUDE_SERVER_ZONE === "EU"
+      ? "https://api.eu.amplitude.com" : "https://api2.amplitude.com");
+  }
+  return origins;
+}
+
 const connectSrc = [
   "'self'",
   apiOrigin(),
@@ -28,6 +50,7 @@ const connectSrc = [
   "https://*.google-analytics.com",
   "https://*.analytics.google.com",
   "https://*.googletagmanager.com",
+  ...productAnalyticsOrigins(),
   ...(isDev ? ["http://localhost:8000", "http://127.0.0.1:8000"] : []),
 ];
 
