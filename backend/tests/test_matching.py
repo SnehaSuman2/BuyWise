@@ -62,6 +62,23 @@ def test_brand_mismatch():
     assert r.match_type != MatchType.EXACT
 
 
+def test_feature_phrases_do_not_become_brand_names():
+    for phrase in [
+        "Noise Cancelling",
+        "Noise Canceling",
+        "Noise Cancellation",
+        "Noise-Cancelling",
+        "Noise Reduction",
+        "Google Fast Pair",
+    ]:
+        assert extract_attributes(f"WH-1000XM5 Wireless Headphones {phrase}").brand is None
+    assert extract_attributes("Noise Airwave Max 4 Wireless Headphones").brand == "noise"
+    assert extract_attributes("Noise Airwave Max with Noise Cancellation").brand == "noise"
+    assert extract_attributes("Google Pixel Buds with Noise Cancellation").brand == "google"
+    assert extract_attributes("WH-1000XM5 Noise Cancelling", brand_hint="Sony").brand == "sony"
+    assert extract_attributes("Wireless headphones with noise cancellation").brand is None
+
+
 def test_ram_storage_pair_extraction():
     a = extract_attributes("Samsung Galaxy S24 Ultra 5G (Titanium Gray, 12GB, 256GB Storage)")
     assert (

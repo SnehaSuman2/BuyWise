@@ -61,6 +61,7 @@ function SearchContent() {
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [retry, setRetry] = useState(0);
   const [input, setInput] = useState(q);
   const [showAllWarnings, setShowAllWarnings] = useState(false);
   const [prevQ, setPrevQ] = useState(q);
@@ -86,7 +87,7 @@ function SearchContent() {
       }
     })();
     return () => { cancelled = true; };
-  }, [q, sort, isUrl]);
+  }, [q, sort, isUrl, retry]);
 
   const runPhotoSearch = async (dataUrl: string) => {
     setPhotoPreview(dataUrl);
@@ -165,7 +166,7 @@ function SearchContent() {
 
       <div className="mb-6 flex flex-wrap items-center gap-3">
         <h1 className="text-2xl font-bold">{heading}</h1>
-        {shown && <DataBadge meta={shown.meta} />}
+        {!loading && shown && (shown.results.length > 0 || shown.family || shown.catalog) && <DataBadge meta={shown.meta} />}
       </div>
       {photoMode && photoPreview && (
         <div className="flex items-center gap-3 mb-4">
@@ -190,7 +191,7 @@ function SearchContent() {
         </div>
       )}
 
-      {q && (
+      {q && shown && shown.results.length > 0 && (
         <div className="flex items-center gap-2 mb-6 flex-wrap">
           {SORTS.map((s) => <button key={s.key} onClick={() => router.push(`/search?q=${encodeURIComponent(q)}&sort=${s.key}`)} className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${sort === s.key ? "bg-indigo-500/10 text-indigo-500" : "bg-muted/50 hover:bg-muted"}`}>{s.label}</button>)}
           {shown && <span className="text-sm text-muted-foreground ml-auto">{shown.total_results} product{shown.total_results === 1 ? "" : "s"}</span>}
@@ -203,8 +204,15 @@ function SearchContent() {
       {!loading && (shown?.family || shown?.catalog) && shown.results.length > 0 && <h2 className="text-sm font-medium text-muted-foreground mb-3">All listings</h2>}
       {loading && <Spinner label={photoMode ? "Looking for this product…" : "Searching retailers…"} className="py-10 justify-center" />}
       {error && <ErrorBox message={error} />}
-      {!loading && !error && shown && shown.results.length === 0 && (
-        <div className="text-center py-20"><p className="text-lg text-muted-foreground">No products found{q ? <> for &quot;{q}&quot;</> : " for this photo"}</p><p className="text-sm text-muted-foreground mt-2">{q ? "Try a more specific product name, model number or a retailer URL." : "Try a clearer photo of the product or its box, or type the product name."}</p></div>
+      {!loading && !error && shown && shown.results.length === 0 && !shown.family && !shown.catalog && (
+        <div className="text-center py-14 rounded-2xl border border-border/50 bg-muted/10">
+          <p className="text-lg font-semibold">We couldn’t find matching offers right now</p>
+          <p className="text-sm text-muted-foreground mt-2 max-w-lg mx-auto px-4">{q ? "This can happen when retailers return accessories or unrelated products. Paste a retailer’s product link in the search box, or try again." : "Try a clearer photo of the product or its box, or type the product name."}</p>
+          <div className="flex justify-center flex-wrap gap-3 mt-5">
+            {q && <button type="button" onClick={() => setRetry(value => value + 1)} className="min-h-11 rounded-xl bg-indigo-600 px-5 text-sm font-semibold text-white hover:bg-indigo-700">Try again</button>}
+            <Link href="/agent" className="inline-flex items-center min-h-11 rounded-xl border border-border px-5 text-sm font-medium hover:bg-muted">Ask the shopping assistant</Link>
+          </div>
+        </div>
       )}
       {!loading && shown && shown.results.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">

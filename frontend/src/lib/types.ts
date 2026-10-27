@@ -5,6 +5,7 @@ export interface DataMeta {
   is_demo: boolean;
   providers: string[];
   cached: boolean;
+  catalog_fallback?: boolean;
   warnings: string[];
 }
 

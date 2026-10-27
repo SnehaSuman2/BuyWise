@@ -6,10 +6,11 @@ export default function DataBadge({ meta, className = "" }: { meta?: DataMeta | 
   if (!meta) return null;
   const demo = meta.is_demo;
   const mixed = "data_mode" in meta && meta.data_mode === "mixed";
+  const saved = "catalog_fallback" in meta && meta.catalog_fallback;
   return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold uppercase tracking-wide border ${demo ? "bg-amber-500/10 text-amber-600 border-amber-500/30" : "bg-emerald-500/10 text-emerald-600 border-emerald-500/30"} ${className}`} title={demo ? "Simulated data — configure live providers to replace it" : "Live data from configured providers"}>
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold uppercase tracking-wide border ${demo || saved ? "bg-amber-500/10 text-amber-600 border-amber-500/30" : "bg-emerald-500/10 text-emerald-600 border-emerald-500/30"} ${className}`} title={demo ? "Simulated data — configure live providers to replace it" : saved ? "Previously recorded products; prices may have changed" : "Live data from configured providers"}>
       {demo ? <FlaskConical className="w-3 h-3" /> : <Radio className="w-3 h-3" />}
-      {demo ? (mixed ? "Mixed demo data" : "Demo data") : "Live data"}
+      {demo ? (mixed ? "Mixed demo data" : "Demo data") : saved ? "Saved results" : "Live data"}
     </span>
   );
 }

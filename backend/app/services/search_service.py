@@ -421,15 +421,35 @@ class SearchService:
         persist_started = time.perf_counter()
         results = await self._persist_groups(groups, query_type, reference_product=ref_product)
         persist_ms = int((time.perf_counter() - persist_started) * 1000)
-        if not results and unavailable_reason and query_type == "text":
-            # The vendor is down or out of quota. Answer from what the catalogue
-            # already knows rather than showing nothing, and say so plainly.
+        catalog_fallback = False
+        if not results and query_type == "text":
+            # A successful vendor response can still contain only accessories or
+            # unrelated products. Recover from that empty result just as for outages.
             results = await self._catalog_fallback(query_text)
+            results = [
+                r
+                for r in results
+                if (
+                    request.min_price is None
+                    or (r.lowest_price is not None and r.lowest_price >= request.min_price)
+                )
+                and (
+                    request.max_price is None
+                    or (r.lowest_price is not None and r.lowest_price <= request.max_price)
+                )
+            ]
             if results:
+                catalog_fallback = True
+                cached = True
                 warnings = [w for w in warnings if not w.startswith("Live retailer search")]
-                warnings.append(
-                    "Live retailer search is temporarily unavailable. Showing products "
-                    "BuyWise has seen before; prices may be out of date."
+                warnings.insert(
+                    0,
+                    (
+                        "Live retailer search is temporarily unavailable. "
+                        if unavailable_reason
+                        else "No matching offers came back from the current retailer search. "
+                    )
+                    + "Showing products BuyWise has seen before; prices may be out of date.",
                 )
         # If the URL flow produced a reference product not represented in results, put it first.
         if reference_product_id and all(str(r.id) != reference_product_id for r in results):
@@ -505,6 +525,7 @@ class SearchService:
                 is_demo=is_demo,
                 providers=sorted(set(providers_used)),
                 cached=cached,
+                catalog_fallback=catalog_fallback,
                 warnings=warnings,
                 timings={
                     "providers_ms": providers_ms,
@@ -692,7 +713,20 @@ class SearchService:
             if q_brand and ref.brand and ref.brand != q_brand:
                 hidden += 1
                 continue
+            # Marketing words such as "Active" can look like a model tier to
+            # the general matcher. They must not bypass a conflicting model code.
             m = match_products(query_ref, g.reference)
+            q_codes = {t.replace("-", "") for t in q.model_tokens}
+            ref_codes = {t.replace("-", "") for t in ref.model_tokens}
+            if (
+                q_codes
+                and ref_codes
+                and not q_codes.intersection(ref_codes)
+                and not (q.line_family and ref.line_family)
+                and any(r.startswith("Model line differs") for r in m.reasons)
+            ):
+                hidden += 1
+                continue
             conflicting = m.match_type == MatchType.UNKNOWN or any(
                 r.startswith(("Model code differs", "Generation differs")) for r in m.reasons
             )
@@ -860,11 +894,19 @@ class SearchService:
         if not words:
             return []
         stmt = select(Product)
+        if not self.settings.demo_mode:
+            stmt = stmt.where(Product.is_demo.is_(False))
         for w in words:
             stmt = stmt.where(Product.name.ilike(f"%{w}%"))
         stmt = stmt.order_by(Product.updated_at.desc()).limit(24)
         products = (await self.db.execute(stmt)).scalars().all()
-        return [await self._result_for_product(p, None) for p in products]
+        groups, _ = self._filter_to_named_model(
+            [ListingGroup(reference=Candidate(p.name, brand=p.brand), product=p) for p in products],
+            query_text,
+        )
+        results = [await self._result_for_product(g.product, None) for g in groups]
+        results, _ = hide_non_product_cards(results, query_text)
+        return results
 
     async def _search_by_image(
         self, image_url: str

@@ -69,6 +69,64 @@ class FakeAmazonProduct:
 
 
 @pytest.mark.asyncio
+async def test_homepage_sony_example_keeps_amazon_title_without_brand(client, monkeypatch):
+    title = "WH-1000XM5 Best Active Noise Cancelling Wireless Bluetooth Over Ear Headphones with Mic for Clear Calling,Battery Life 30 Hours-Mid Night Blue"
+    items = [
+        listing(title, "Amazon.in", "amazon.in", 24990),
+        listing("Sony WH-1000XM5 Series Skins", "Wraps.in", "wraps.in", 999),
+        listing("WH-1000XM6 Active Noise Cancelling Headphones", "Amazon.in", "amazon.in", 34990),
+        listing("WF-1000XM5 Active Noise Cancelling Earbuds", "Amazon.in", "amazon.in", 19990),
+        listing("Noise Airwave Max 4 Wireless Headphones", "Amazon.in", "amazon.in", 4999),
+    ]
+    monkeypatch.setattr(registry, "product_search_providers", lambda: [FakeSearch(items)])
+    monkeypatch.setattr(registry, "retailer_search_providers", lambda: [FakeRetailerSearch()])
+    for query in ["Sony WH-1000XM5", "Sony WH1000XM5 headphones"]:
+        body = (await client.post("/api/v1/search", json={"query": query})).json()
+        assert [p["name"] for p in body["results"]] == [title]
+        assert not body["meta"]["catalog_fallback"]
+
+
+@pytest.mark.asyncio
+async def test_filtered_empty_search_recovers_matching_recorded_products(client, monkeypatch):
+    items = [listing("Sony WH-1000XM5 Wireless Headphones", "Amazon.in", "amazon.in", 24990)]
+    provider = FakeSearch(items)
+    monkeypatch.setattr(registry, "product_search_providers", lambda: [provider])
+    monkeypatch.setattr(registry, "retailer_search_providers", lambda: [FakeRetailerSearch()])
+    first = (await client.post("/api/v1/search", json={"query": "Sony WH-1000XM5"})).json()
+    assert first["results"]
+    provider.items = [listing("Sony WH-1000XM5 Skins", "Wraps.in", "wraps.in", 999)]
+    recovered = (await client.post("/api/v1/search", json={"query": "Sony WH-1000XM5"})).json()
+    assert [p["id"] for p in recovered["results"]] == [p["id"] for p in first["results"]]
+    assert recovered["meta"]["catalog_fallback"] and recovered["meta"]["cached"]
+    assert "seen before" in recovered["meta"]["warnings"][0]
+    bounded = (
+        await client.post("/api/v1/search", json={"query": "Sony WH-1000XM5", "max_price": 1000})
+    ).json()
+    assert not bounded["results"] and not bounded["meta"]["catalog_fallback"]
+
+
+@pytest.mark.asyncio
+async def test_catalog_fallback_excludes_accessories_other_models_and_demo(client, db, monkeypatch):
+    from app.core.config import get_settings
+    from app.models import Product
+
+    # These names all satisfy the SQL substring lookup; they must still pass
+    # the same relevance and data-provenance checks as live search results.
+    for name, demo in [
+        ("Sony WH-1000XM5 Skins", False),
+        ("Sony WH-1000XM50 Headphones", False),
+        ("Sony WH-1000XM5 Wireless Headphones", True),
+    ]:
+        db.add(Product(name=name, is_demo=demo))
+    await db.commit()
+    monkeypatch.setattr(get_settings(), "SERPAPI_API_KEY", "configured-for-test")
+    monkeypatch.setattr(registry, "product_search_providers", lambda: [FakeSearch()])
+    monkeypatch.setattr(registry, "retailer_search_providers", lambda: [FakeRetailerSearch()])
+    body = (await client.post("/api/v1/search", json={"query": "Sony WH-1000XM5"})).json()
+    assert body["results"] == [] and not body["meta"]["catalog_fallback"]
+
+
+@pytest.mark.asyncio
 async def test_named_model_search_hides_other_generations(client, monkeypatch):
     items = [
         listing("Apple iPhone 17 (256 GB) - Black", "Amazon.in", "amazon.in", 79900),

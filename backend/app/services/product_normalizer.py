@@ -692,8 +692,16 @@ def extract_attributes(
     # brand
     brand = (brand_hint or specs.get("brand") or "").strip().lower() or None
     if not brand:
+        # Feature names are not manufacturer names. Amazon titles often omit the
+        # brand, so "WH-1000XM5 ... Noise Cancelling" must not become brand Noise.
+        brand_text = re.sub(
+            r"\bnoise[\s-]+(?:cancell?ing|cancell?ation|reduction|isolation|isolating|suppression)\b",
+            " ",
+            text,
+        )
+        brand_text = re.sub(r"\bgoogle[\s-]+(?:fast[\s-]+pair|assistant|tv)\b", " ", brand_text)
         for b in KNOWN_BRANDS:
-            if re.search(rf"\b{re.escape(b)}\b", text):
+            if re.search(rf"\b{re.escape(b)}\b", brand_text):
                 brand = b
                 break
     if not brand:
@@ -708,6 +716,8 @@ def extract_attributes(
             and len(first) > 2
             and first not in STOPWORDS
             and first not in SALES_WORDS
+            and first not in GENERIC_WORDS
+            and first not in {"noise", "google"}
         ):
             brand = first
     if brand in PRODUCT_LINE_BRANDS:
