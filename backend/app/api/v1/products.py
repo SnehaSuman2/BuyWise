@@ -126,7 +126,7 @@ async def get_price_history(
     user=Depends(get_optional_user),
 ):
     ent = await entitlements_for(db, user)
-    if not ent.see_prices:
+    if not ent.compare_offers:
         product = await catalog.load_product(db, product_id)
         if product is None:
             raise HTTPException(status_code=404, detail="Product not found")
@@ -146,7 +146,11 @@ async def get_price_history(
             ),
             message="Price history is part of BuyWise Pro.",
             locked=True,
-            meta=DataMeta(data_mode="live", is_demo=False, providers=[]),
+            meta=DataMeta(
+                data_mode="demo" if product.is_demo else "live",
+                is_demo=product.is_demo,
+                providers=[],
+            ),
         )
     max_days = ent.history_days
     result = await PriceHistoryService(db).get_history(

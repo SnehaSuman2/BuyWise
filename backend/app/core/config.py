@@ -193,6 +193,10 @@ class Settings(BaseSettings):
     # --- Google auth ---
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
+    YAHOO_CLIENT_ID: str = ""
+    YAHOO_CLIENT_SECRET: str = ""
+    MICROSOFT_CLIENT_ID: str = ""
+    MICROSOFT_CLIENT_SECRET: str = ""
 
     # --- Trustpilot (optional evidence source) ---
     TRUSTPILOT_ENABLED: bool = False
@@ -210,12 +214,12 @@ class Settings(BaseSettings):
     CELERY_RESULT_BACKEND: str = ""
 
     # --- Plan limits, per tier ---
-    # Free is a taste: one alert, a few saved products, the lowest price but not the
-    # retailer-by-retailer comparison. Each paid period unlocks more, and the yearly
-    # plan (PRO_MAX_*) is the ceiling.
+    # Non-subscriber accounts retain basic account limits. Retailer comparisons,
+    # history and timing are Pro-only; PAYWALL_PRICES also gates current prices.
+    # Each paid period unlocks more; PRO_MAX_* is the yearly ceiling.
     FREE_MAX_ALERTS: int = 1
     FREE_MAX_SAVED_PRODUCTS: int = 3
-    FREE_HISTORY_DAYS: int = 30
+    FREE_HISTORY_DAYS: int = 0  # Kept for configuration compatibility; history is Pro-only.
     PRO_MONTHLY_MAX_ALERTS: int = 25
     PRO_MONTHLY_MAX_SAVED_PRODUCTS: int = 100
     PRO_MONTHLY_HISTORY_DAYS: int = 90

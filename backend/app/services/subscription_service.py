@@ -52,8 +52,8 @@ class Entitlements:
     alerts: int
     saved_products: int
     history_days: int
-    compare_offers: bool  # the retailer-by-retailer comparison and the picks
-    see_prices: bool = True  # prices, price history and offer counts anywhere
+    compare_offers: bool  # retailer comparisons, picks, history and buy/wait guidance
+    see_prices: bool = True  # current prices and offer counts anywhere
 
     def as_limits(self) -> dict:
         return {
@@ -73,7 +73,7 @@ def tier(plan_id: str) -> Entitlements:
             "free",
             s.FREE_MAX_ALERTS,
             s.FREE_MAX_SAVED_PRODUCTS,
-            s.FREE_HISTORY_DAYS,
+            0,  # Historical prices and timing signals require a subscription.
             False,
             see_prices=not s.PAYWALL_PRICES,
         ),
@@ -124,7 +124,7 @@ def plans() -> list[PlanInfo]:
             f"{t.history_days}-day price history",
             "Full retailer-by-retailer price comparison",
             "Best overall, cheapest and safest picks",
-            "Deeper trust reports with evidence",
+            "Seller trust context alongside each offer",
             "AI shopping agent with full comparison",
         ]
 
@@ -150,44 +150,22 @@ def plans() -> list[PlanInfo]:
     ]
     best = max(paid, key=lambda plan: saving(plan[2], plan[3]))[0]
 
-    free = tier("free")
-    free_features = ["Search by name, link or photo", "Trust Scores and buyer reviews"]
-    if free.see_prices:
-        free_features += [
-            "Lowest price for every product",
-            f"{free.history_days}-day price history",
-        ]
-    free_features += [
-        f"{free.alerts} price alert by email",
-        f"Up to {free.saved_products} saved products",
-        "AI shopping agent" + (" (lowest price only)" if free.see_prices else " (products only)"),
-    ]
+    # Only purchasable subscriptions belong in the public plan catalogue.
     return [
         PlanInfo(
-            id="free",
-            name="Free",
-            price_inr=0,
-            period_days=0,
-            features=free_features,
-        ),
-        *[
-            PlanInfo(
-                id=plan_id,
-                name=name,
-                price_inr=price,
-                period_days=days,
-                features=(
-                    tier_features(tier(plan_id))
-                    if days == 30
-                    else tier_features(tier(plan_id))
-                    + [f"Saves {saving(price, days)}% against paying monthly"]
-                ),
-                monthly_equivalent_inr=per_month(price, days),
-                savings_percent=saving(price, days) or None,
-                is_best_value=plan_id == best,
-            )
-            for plan_id, name, price, days in paid
-        ],
+            id=plan_id,
+            name=name,
+            price_inr=price,
+            period_days=days,
+            features=(
+                tier_features(tier(plan_id))
+                + ([f"Saves {saving(price, days)}% against paying monthly"] if days > 30 else [])
+            ),
+            monthly_equivalent_inr=per_month(price, days),
+            savings_percent=saving(price, days) or None,
+            is_best_value=plan_id == best,
+        )
+        for plan_id, name, price, days in paid
     ]
 
 

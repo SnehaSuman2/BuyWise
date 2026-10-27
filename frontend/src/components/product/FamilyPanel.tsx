@@ -94,7 +94,7 @@ export default function FamilyPanel({ family, compact = false }: { family: Produ
       {family.locked ? (
         <div>
           <div className="flex items-center gap-2 text-sm text-muted-foreground mb-3"><Lock className="w-4 h-4 text-indigo-500" /> {variant.offer_count} offer{variant.offer_count === 1 ? "" : "s"} from {variant.retailer_count} store{variant.retailer_count === 1 ? "" : "s"} for {variant.label}{variant.colors.length ? ` in ${variant.colors.length} colour${variant.colors.length === 1 ? "" : "s"}` : ""}.</div>
-          <LockedPanel hiddenOffers={variant.offer_count} hiddenRetailers={variant.retailer_count} what="the store-by-store comparison" />
+          <LockedPanel hiddenOffers={variant.offer_count} hiddenRetailers={variant.retailer_count} what="the store-by-store comparison" placement={compact ? "search" : "family"} />
         </div>
       ) : rows.length === 0 ? (
         <p className="text-sm text-muted-foreground py-4">No store has a price recorded for this {color ? "colour" : "size"} yet. Open a product below and BuyWise fetches its stores.</p>

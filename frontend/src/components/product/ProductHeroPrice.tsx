@@ -19,16 +19,18 @@ import type { ProductDetail } from "@/lib/types";
  * shown an advertisement for the plan they had already bought.
  */
 export default function ProductHeroPrice({ initial }: { initial: ProductDetail }) {
-  const { user } = useAuth();
-  const [product, setProduct] = useState<ProductDetail>(initial);
+  const { user, loading: authLoading } = useAuth();
+  const viewer = `${user?.id ?? "anon"}:${user?.plan ?? "none"}:${user?.role ?? "none"}:${initial.id}`;
+  const [snapshot, setSnapshot] = useState<{ viewer: string; product: ProductDetail } | null>(null);
+  const product = snapshot?.viewer === viewer ? snapshot.product : initial;
   const { history } = usePriceHistory(initial.id, 90);
 
   useEffect(() => {
-    if (!user) return;
+    if (authLoading) return;
     let live = true;
-    api.product(initial.id).then((p) => { if (live) setProduct(p); }).catch(() => {});
+    api.product(initial.id).then((p) => { if (live) setSnapshot({ viewer, product: p }); }).catch(() => {});
     return () => { live = false; };
-  }, [user, initial.id]);
+  }, [authLoading, viewer, initial.id]);
 
   const signal = history && !history.locked ? history.signal : null;
   const SignalIcon = signal?.action === "BUY_NOW" ? TrendingDown : signal?.action === "WAIT" ? TrendingUp : Minus;
@@ -42,8 +44,8 @@ export default function ProductHeroPrice({ initial }: { initial: ProductDetail }
             <Lock className="w-5 h-5 text-indigo-500" /> Prices with Pro
           </div>
           <p className="text-muted-foreground text-sm">
-            Lowest price, every retailer&apos;s offer and price history are part of BuyWise Pro.{" "}
-            <Link href="/pricing" className="text-indigo-500 hover:underline">See plans</Link>
+            Unlock retailer prices, best-value picks and price history for this product.{" "}
+            <Link href={`/pricing?source=retailer_comparison&returnTo=${encodeURIComponent(`/product/${product.id}`)}`} className="text-indigo-500 hover:underline">Explore Pro</Link>
           </p>
         </div>
       ) : (

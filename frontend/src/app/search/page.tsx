@@ -3,6 +3,7 @@
 import { useSearchParams, useRouter } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import ShoppingJourney from "@/components/ui/ShoppingJourney";
 import { Star, Search, Link2, AlertTriangle, Camera, X, Lock } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { formatPrice, matchBadgeClass } from "@/lib/utils";
@@ -11,6 +12,7 @@ import Spinner from "@/components/ui/Spinner";
 import ErrorBox from "@/components/ui/ErrorBox";
 import type { ProductSearchResult, SearchResponse } from "@/lib/types";
 import { downscaleImage, PENDING_PHOTO_KEY } from "@/lib/photo";
+import LockedPanel from "@/components/product/LockedPanel";
 import FamilyPanel from "@/components/product/FamilyPanel";
 import SpecPanel from "@/components/search/SpecPanel";
 import { track } from "@/lib/analytics";
@@ -76,7 +78,7 @@ function SearchContent() {
       try {
         const res = await api.search(isUrl ? { url: q, sort_by: sort, page_size: 24 } : { query: q, sort_by: sort, page_size: 24 });
         if (!cancelled) setData(res);
-        if (!cancelled) track("search", { query_type: res.query_type, search_term: isUrl ? undefined : q, results: res.total_results, data_mode: res.meta.data_mode });
+        if (!cancelled) track("search", { query_type: res.query_type, results: res.total_results, data_mode: res.meta.data_mode });
       } catch (e) {
         if (!cancelled) setError((e as ApiError).message);
       } finally {
@@ -112,7 +114,7 @@ function SearchContent() {
     let live = true;
     Promise.resolve().then(() => { if (live) { setPhotoPreview(dataUrl); setPhotoData(null); setError(null); setLoading(true); } });
     api.search({ image_base64: dataUrl, page_size: 24 })
-      .then((res) => { if (live) setPhotoData(res); })
+      .then((res) => { if (live) { setPhotoData(res); track("search", { query_type: "image", results: res.total_results, data_mode: res.meta.data_mode }); } })
       .catch((e: ApiError) => { if (live) setError(e.message); })
       .finally(() => { if (live) setLoading(false); });
     return () => { live = false; };
@@ -142,6 +144,7 @@ function SearchContent() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
+      <ShoppingJourney step={0} />
       <form onSubmit={submit} className="glass rounded-2xl p-2 flex items-center gap-2 mb-6 max-w-2xl" role="search">
         <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-muted/50">{/^https?:\/\//i.test(input) ? <Link2 className="w-5 h-5 text-indigo-500" /> : <Search className="w-5 h-5 text-muted-foreground" />}</div>
         <input value={input} onChange={(e) => setInput(e.target.value)} placeholder="Search products or paste a retailer URL" className="flex-1 min-w-0 bg-transparent outline-none" aria-label="Search" />
@@ -194,6 +197,7 @@ function SearchContent() {
         </div>
       )}
 
+      {!loading && !error && shown?.results.some(p => p.locked) && !shown.family?.locked && <div className="mb-7"><LockedPanel feature="retailer_comparison" placement="search" /></div>}
       {!loading && shown?.family && <FamilyPanel family={shown.family} compact />}
       {!loading && shown?.catalog && <SpecPanel key={q} initial={shown.catalog} filters={shown.catalog_filters} />}
       {!loading && (shown?.family || shown?.catalog) && shown.results.length > 0 && <h2 className="text-sm font-medium text-muted-foreground mb-3">All listings</h2>}

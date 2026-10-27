@@ -11,7 +11,7 @@ from app.services.subscription_service import tier
 
 def test_each_tier_unlocks_more_than_the_one_below():
     free, m, h, y = tier("free"), tier("pro_monthly"), tier("pro_6month"), tier("pro_yearly")
-    assert free.alerts == 1 and free.saved_products == 3 and free.history_days == 30
+    assert free.alerts == 1 and free.saved_products == 3 and free.history_days == 0
     assert not free.compare_offers
     for lower, higher in ((free, m), (m, h), (h, y)):
         assert higher.alerts > lower.alerts
@@ -126,3 +126,72 @@ async def test_agent_gives_the_price_but_not_the_picks_to_free_users(client, aut
     body = r.json()
     assert not any(p["recommendations"]["locked"] for p in body["products"])
     assert not any("part of BuyWise Pro" in w for w in body["meta"]["warnings"])
+
+
+@pytest.mark.asyncio
+async def test_history_and_its_alias_always_require_pro(client, auth_headers, demo_product):
+    # Test-suite config exposes current prices. Historical data still must not leak.
+    for headers in ({}, auth_headers):
+        for path in ("history", "price-history"):
+            r = await client.get(
+                f"/api/v1/products/{demo_product}/{path}?days=365", headers=headers
+            )
+            assert r.status_code == 200
+            body = r.json()
+            assert body["locked"] and body["history"] == [] and body["stats"] is None
+            assert body["days_available"] == 0 and "Pro" in body["message"]
+            assert body["signal"]["action"] == "INSUFFICIENT_DATA"
+            assert body["signal"]["target_price"] is None
+
+
+@pytest.mark.asyncio
+async def test_agent_cannot_bypass_pro_with_a_direct_product_id(client, demo_product, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from app.core.config import get_settings
+    from app.schemas.recommendation import AgentIntent
+
+    monkeypatch.setattr(get_settings(), "PAYWALL_PRICES", True)
+    monkeypatch.setattr(
+        "app.services.shopping_agent.ShoppingAgent.extract_intent",
+        AsyncMock(return_value=AgentIntent(kind="buy_timing")),
+    )
+    r = await client.post(
+        "/api/v1/agent", json={"query": "should I buy now", "product_id": demo_product}
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["products"]
+    product = body["products"][0]
+    assert product["product"]["locked"] and product["product"]["lowest_price"] is None
+    assert (
+        product["recommendations"]["locked"] and product["recommendations"]["recommendations"] == []
+    )
+    assert body["price_signal"] is None
+    assert "Pro" in body["answer"] and "₹" not in body["answer"]
+    assert "no price history" not in body["answer"]
+
+
+@pytest.mark.asyncio
+async def test_agent_timing_does_not_leak_history_with_current_price_preview(client):
+    r = await client.post(
+        "/api/v1/agent", json={"query": "should I buy Sony WH-1000XM5 now or wait"}
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["price_signal"] is None
+    assert body["products"] and all(p["recommendations"]["locked"] for p in body["products"])
+    assert "Pro" in body["answer"]
+
+
+@pytest.mark.asyncio
+async def test_expired_subscription_loses_history_access(client, auth_headers, db, demo_product):
+    await _make_pro(db, "user@buywisetest.com", "pro_monthly")
+    unlocked = await client.get(f"/api/v1/products/{demo_product}/history", headers=auth_headers)
+    assert unlocked.status_code == 200 and not unlocked.json()["locked"]
+    sub = (await db.execute(select(Subscription))).scalar_one()
+    sub.current_period_end = datetime.now(timezone.utc) - timedelta(seconds=1)
+    await db.commit()
+    locked = await client.get(f"/api/v1/products/{demo_product}/history", headers=auth_headers)
+    assert locked.status_code == 200 and locked.json()["locked"]
+    assert locked.json()["history"] == [] and locked.json()["stats"] is None

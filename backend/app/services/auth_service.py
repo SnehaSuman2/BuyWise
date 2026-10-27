@@ -21,7 +21,7 @@ from app.core.security import (
     validate_password_strength,
     verify_password,
 )
-from app.models import RefreshSession, User
+from app.models import OAuthIdentity, RefreshSession, User
 from app.providers.auth.google import GoogleAuthError, verify_google_id_token
 from app.schemas.user import TokenResponse, UserResponse
 
@@ -161,6 +161,49 @@ class AuthService:
         if user.deleted_at is not None or not user.is_active:
             raise HTTPException(status_code=403, detail="Account unavailable")
         self._sync_admin_role(user)
+        return await self._issue_tokens(user, user_agent)
+
+    async def oauth_login(
+        self, provider: str, identity: dict, user_agent: str | None = None
+    ) -> TokenResponse:
+        external = (
+            await self.db.execute(
+                select(OAuthIdentity).where(
+                    OAuthIdentity.provider == provider, OAuthIdentity.subject == identity["sub"]
+                )
+            )
+        ).scalar_one_or_none()
+        if external:
+            user = await self.db.get(User, external.user_id)
+        else:
+            existing = (
+                await self.db.execute(select(User).where(User.email == identity["email"]))
+            ).scalar_one_or_none()
+            if existing:
+                raise HTTPException(
+                    409,
+                    "An account with this email already exists. Sign in using your original method.",
+                )
+            if identity["email"] in self.settings.admin_emails:
+                raise HTTPException(
+                    403, "Please use your existing sign-in method for this account."
+                )
+            username = "shopper_" + secrets.token_hex(8)
+            user = User(
+                email=identity["email"],
+                username=username,
+                display_name=str(identity.get("name") or "Shopper")[:200],
+                auth_provider=provider,
+                password_hash=None,
+                role="user",
+                is_verified=provider == "yahoo" and identity.get("email_verified") is True,
+            )
+            self.db.add(user)
+            await self.db.flush()
+            self.db.add(OAuthIdentity(user_id=user.id, provider=provider, subject=identity["sub"]))
+        if user is None or user.deleted_at is not None or not user.is_active:
+            raise HTTPException(403, "Account unavailable")
+        # Provider emails are profile data, not authority to acquire an admin role.
         return await self._issue_tokens(user, user_agent)
 
     async def refresh(self, refresh_token: str, user_agent: str | None = None) -> TokenResponse:

@@ -72,8 +72,8 @@ async def test_offers_true_price_match_and_trust(client, admin_headers, demo_pro
 
 
 @pytest.mark.asyncio
-async def test_history_honest_when_insufficient(client, demo_product):
-    r = await client.get(f"/api/v1/products/{demo_product}/history?days=90")
+async def test_history_honest_when_insufficient(client, admin_headers, demo_product):
+    r = await client.get(f"/api/v1/products/{demo_product}/history?days=90", headers=admin_headers)
     assert r.status_code == 200
     data = r.json()
     # A fresh search yields one observation per retailer today → not enough history.

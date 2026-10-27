@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import ShoppingJourney from "@/components/ui/ShoppingJourney";
 import { notFound } from "next/navigation";
 import { Star, Shield, ThumbsUp, ThumbsDown, MessagesSquare } from "lucide-react";
 import { serverGet } from "@/lib/api";
@@ -48,6 +49,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
+      <ShoppingJourney step={1} productId={product.id} />
       {jsonLd && <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />}
 
       <section className="grid grid-cols-1 md:grid-cols-5 gap-8 mb-12 animate-fade-in">

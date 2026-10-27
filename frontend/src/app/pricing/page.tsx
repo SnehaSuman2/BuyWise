@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
+import { safeReturnPath } from "@/lib/oauth";
 import { useRouter } from "next/navigation";
-import { Crown, Check, AlertTriangle, QrCode, ShieldCheck } from "lucide-react";
+import { Crown, Check, AlertTriangle, QrCode, ShieldCheck, ArrowRight, Store, TrendingDown, Award } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useMeta } from "@/lib/meta";
@@ -37,16 +39,29 @@ export default function PricingPage() {
   const { meta } = useMeta();
   const router = useRouter();
   const [plans, setPlans] = useState<PlanInfo[]>([]);
+  const [returnTo, setReturnTo] = useState<string | null>(null);
+  const [plansError, setPlansError] = useState(false);
   const [sub, setSub] = useState<SubscriptionStatus | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
-  useEffect(() => { api.plans().then(setPlans).catch(() => setPlans([])); }, []);
+  useEffect(() => {
+    let live = true;
+    api.plans().then(data => {
+      if (!live) return;
+      setPlans(data.filter(p => p.price_inr > 0));
+      const params = new URLSearchParams(window.location.search);
+      const source = params.get("source");
+      track("view_pro_plans", { source: ["price_history", "recommendations", "retailer_comparison", "search"].includes(source ?? "") ? source! : "direct" });
+      if (params.has("returnTo")) setReturnTo(safeReturnPath(params.get("returnTo")));
+    }).catch(() => { if (live) setPlansError(true); });
+    return () => { live = false; };
+  }, []);
   useEffect(() => { if (!user) return; api.subscription().then(setSub).catch(() => setSub(null)); }, [user]);
   const currentSub = user ? sub : null;
 
   const checkout = async (planId: string) => {
-    if (!user) { router.push(`/login?next=/pricing`); return; }
+    if (!user) { router.push(`/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`); return; }
     if (meta && meta.payments_ready === false) { setMsg({ ok: false, text: "Checkout is unavailable right now: Razorpay is not accepting this site's payment keys." }); return; }
     setBusy(planId); setMsg(null);
     try {
@@ -103,19 +118,24 @@ export default function PricingPage() {
     <div className="max-w-6xl mx-auto px-4 py-12">
       <div className="text-center mb-10">
         <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-amber-500/10 text-amber-600 text-sm font-medium mb-4"><Crown className="w-4 h-4" /> BuyWise Pro</div>
-        <h1 className="text-3xl font-bold mb-3">More tracking. Deeper insight. Same honest data.</h1>
-        <p className="text-muted-foreground max-w-2xl mx-auto">Pro pays for the data and compute behind BuyWise. It never changes Trust Scores or rankings.</p>
+        <h1 className="text-3xl font-bold mb-3">Find where to buy. Know when to buy.</h1>
+        <p className="text-muted-foreground max-w-2xl mx-auto">Unlock retailer comparisons, best-value picks and recorded price history. Choose the plan that fits how you shop.</p>
         <p className="text-sm text-muted-foreground mt-3 inline-flex items-center gap-2"><QrCode className="w-4 h-4 text-indigo-500" /> Pay by UPI, card or netbanking. No auto-renewal: a plan simply ends unless you buy another.</p>
       </div>
 
       {meta && !meta.payments_enabled && <p className="mb-6 text-sm text-amber-600 flex items-center justify-center gap-2"><AlertTriangle className="w-4 h-4" /> Payments are not configured on this deployment yet (Razorpay keys missing). Plans are shown for reference.</p>}
-      {meta && meta.payments_enabled && meta.payments_ready === false && <p className="mb-6 text-sm text-amber-600 flex items-center justify-center gap-2"><AlertTriangle className="w-4 h-4" /> Checkout is unavailable right now: Razorpay is not accepting this site&apos;s payment keys. Nothing you do here can be charged. Please try again later.</p>}
+      {meta && meta.payments_enabled && meta.payments_ready === false && <p className="mb-6 text-sm text-amber-600 flex items-center justify-center gap-2"><AlertTriangle className="w-4 h-4" /> Checkout is unavailable right now: Razorpay is not accepting this site&apos;s payment keys. Please try again later.</p>}
       {msg && <div className={`mb-6 p-3 rounded-xl text-sm border text-center ${msg.ok ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20" : "bg-rose-500/10 text-rose-600 border-rose-500/20"}`}>{msg.text}</div>}
-      {currentSub?.is_pro && <div className="mb-6 glass rounded-2xl p-4 text-sm flex flex-wrap items-center justify-between gap-3"><span>You are on <strong>{currentSub.plan.replace(/_/g, " ")}</strong>{currentSub.current_period_end ? ` until ${formatDate(currentSub.current_period_end)}` : ""}{currentSub.cancel_at_period_end ? " (cancellation scheduled)" : ""}.</span>{!currentSub.cancel_at_period_end && <button onClick={cancel} disabled={busy === "cancel"} className="px-3 py-1.5 rounded-lg glass text-xs font-medium hover:bg-muted/50">Cancel renewal</button>}</div>}
+      {currentSub?.is_pro && <div className="mb-6 glass rounded-2xl p-4 text-sm flex flex-wrap items-center justify-between gap-3"><span>You are on <strong>{currentSub.plan.replace(/_/g, " ")}</strong>{currentSub.current_period_end ? ` until ${formatDate(currentSub.current_period_end)}` : ""}{currentSub.cancel_at_period_end ? " (cancellation scheduled)" : ""}.</span>{!currentSub.cancel_at_period_end && <button onClick={cancel} disabled={busy === "cancel"} className="px-3 py-1.5 rounded-lg glass text-xs font-medium hover:bg-muted/50">End plan at expiry</button>}</div>}
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-start">
+      <div className="grid sm:grid-cols-3 gap-4 mb-12">
+        {[{ icon: Store, title: "Compare retailers", text: "See offers and known costs side by side." }, { icon: Award, title: "Choose with confidence", text: "Best overall, cheapest and safest picks, explained." }, { icon: TrendingDown, title: "Know when to buy", text: "Recorded price history and evidence-based timing." }].map(({ icon: Icon, title, text }) => <div key={title} className="rounded-2xl border border-border/50 p-5"><Icon size={22} className="text-indigo-500 mb-3" /><h2 className="font-semibold text-sm mb-2">{title}</h2><p className="text-sm text-muted-foreground">{text}</p></div>)}
+      </div>
+      {plansError && <p role="alert" className="mb-6 text-center text-rose-600">Plans couldn’t load. <button onClick={() => window.location.reload()} className="underline">Try again</button></p>}
+      {!plansError && !plans.length && <p role="status" className="text-center text-sm text-muted-foreground mb-6">Loading Pro plans…</p>}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-5 items-stretch">
         {plans.map((p) => {
-          const current = currentSub ? (p.id === "free" ? !currentSub.is_pro : currentSub.plan === p.id) : p.id === "free" && !!user;
+          const current = Boolean(currentSub?.is_pro && currentSub.plan === p.id);
           const highlight = p.is_best_value;
           return (
             <div key={p.id} className={`glass rounded-2xl p-6 flex flex-col relative ${highlight ? "ring-2 ring-indigo-500/50" : ""}`}>
@@ -123,8 +143,8 @@ export default function PricingPage() {
               <h2 className="font-semibold text-lg">{p.name}</h2>
 
               <div className="my-2">
-                <div className="text-3xl font-bold tabular-nums">{p.price_inr ? formatPrice(p.price_inr) : "₹0"}</div>
-                <div className="text-sm text-muted-foreground">{p.period_days ? periodLabel(p.period_days) : "always free"}</div>
+                <div className="text-3xl font-bold tabular-nums">{formatPrice(p.price_inr)}</div>
+                <div className="text-sm text-muted-foreground">{periodLabel(p.period_days)}</div>
               </div>
 
               <div className="h-10 mb-2">
@@ -138,8 +158,8 @@ export default function PricingPage() {
 
               <ul className="space-y-1.5 text-sm text-muted-foreground flex-1 mb-4">{p.features.map((f) => <li key={f} className="flex gap-2"><Check className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />{f}</li>)}</ul>
 
-              {p.id === "free" ? <div className="text-center text-sm text-muted-foreground py-2.5">{current ? "Current plan" : "Included"}</div> : (
-                <button onClick={() => checkout(p.id)} disabled={busy === p.id || current || (meta ? !meta.payments_enabled || meta.payments_ready === false : false)} className={`w-full py-2.5 rounded-xl font-medium flex items-center justify-center gap-2 disabled:opacity-50 transition-colors ${highlight ? "gradient-primary text-white" : "glass hover:bg-muted/50"}`}>
+              {(
+                <button onClick={() => checkout(p.id)} disabled={busy !== null || current || (meta ? !meta.payments_enabled || meta.payments_ready === false : false)} className={`w-full py-2.5 rounded-xl font-medium flex items-center justify-center gap-2 disabled:opacity-50 transition-colors ${highlight ? "gradient-primary text-white" : "glass hover:bg-muted/50"}`}>
                   <QrCode className="w-4 h-4" />
                   {current ? "Current plan" : busy === p.id ? "Opening checkout…" : user ? "Pay by UPI or card" : "Sign in to subscribe"}
                 </button>
@@ -149,17 +169,18 @@ export default function PricingPage() {
         })}
       </div>
 
+      {currentSub?.is_pro && returnTo && <div className="text-center mt-8"><Link href={returnTo} onClick={() => track("pro_return_to_product")} className="inline-flex gap-2 items-center rounded-xl bg-indigo-600 px-6 py-3 text-white font-semibold">Return to your comparison <ArrowRight size={17} /></Link></div>}
       <div className="glass rounded-2xl p-5 mt-8 max-w-3xl mx-auto">
         <h3 className="font-semibold text-sm mb-2 flex items-center gap-2"><ShieldCheck className="w-4 h-4 text-indigo-500" /> How payment works</h3>
         <ul className="text-sm text-muted-foreground space-y-1.5">
           <li>Choosing a plan opens Razorpay with UPI first. On a computer you get a QR code to scan with any UPI app; on a phone it opens GPay, PhonePe, Paytm or whichever you use.</li>
           <li>BuyWise never sees your card, UPI ID or bank details. Razorpay handles the payment and tells us only the order, amount and status.</li>
           <li>Pro activates only after our server verifies the payment with Razorpay. A successful-looking screen is never enough on its own.</li>
-          <li>Nothing renews automatically. When a plan ends you go back to Free, with your alerts and saved products intact.</li>
+          <li>Nothing renews automatically. Pro insights are available for the period you purchase. Your account and saved products remain when it ends.</li>
         </ul>
       </div>
 
-      <p className="text-xs text-muted-foreground text-center mt-6">The price shown is the full amount you pay. Nothing is added at checkout.</p>
+      <p className="text-xs text-muted-foreground text-center mt-6">The price shown is the full amount you pay. Nothing is added at checkout. Offers and recommendations depend on available retailer data; price history builds from recorded observations.</p>
     </div>
   );
 }

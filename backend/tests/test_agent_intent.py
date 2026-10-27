@@ -63,7 +63,7 @@ class NoAmazon:
 
 
 @pytest.mark.asyncio
-async def test_agent_answers_about_the_generation_asked_for(client, monkeypatch):
+async def test_agent_answers_about_the_generation_asked_for(client, admin_headers, monkeypatch):
     items = [
         _listing("Apple iPhone 17 (256 GB) - Black", "Amazon.in", "amazon.in", 79900),
         _listing("Apple iPhone 17 256GB Black", "Flipkart", "flipkart.com", 79490),
@@ -78,7 +78,7 @@ async def test_agent_answers_about_the_generation_asked_for(client, monkeypatch)
     monkeypatch.setattr(registry, "retailer_search_providers", lambda: [NoAmazon()])
 
     for question in ("iphone 17", "should i buy ihpone 17 rigth now or should i wait"):
-        r = await client.post("/api/v1/agent", json={"query": question})
+        r = await client.post("/api/v1/agent", headers=admin_headers, json={"query": question})
         assert r.status_code == 200, r.text
         body = r.json()
         assert body["intent"]["product_query"] == "iphone 17", body["intent"]
@@ -103,7 +103,11 @@ async def test_timing_and_where_to_buy_answers_lead_with_the_verdict(
     monkeypatch.setattr(registry, "retailer_search_providers", lambda: [NoAmazon()])
 
     timing = (
-        await client.post("/api/v1/agent", json={"query": "should i buy iphone 17 now or wait"})
+        await client.post(
+            "/api/v1/agent",
+            headers=admin_headers,
+            json={"query": "should i buy iphone 17 now or wait"},
+        )
     ).json()
     assert timing["intent"]["kind"] == "buy_timing"
     first_line = timing["answer"].split("\n")[0]

@@ -17,10 +17,10 @@ const inflight = new Map<string, Promise<PriceHistoryData | null>>();
 
 export function usePriceHistory(productId: string, days = 90) {
   const { user } = useAuth();
-  const [data, setData] = useState<PriceHistoryData | null>(null);
+  const [result, setResult] = useState<{ key: string; data: PriceHistoryData | null } | null>(null);
   const [loading, setLoading] = useState(true);
   // The answer depends on who is asking, so the viewer is part of the key.
-  const key = `${productId}:${days}:${user?.id ?? "anon"}`;
+  const key = `${productId}:${days}:${user?.id ?? "anon"}:${user?.plan ?? "none"}:${user?.role ?? "none"}`;
 
   useEffect(() => {
     let live = true;
@@ -33,10 +33,10 @@ export function usePriceHistory(productId: string, days = 90) {
       void request.finally(() => setTimeout(() => inflight.delete(key), 30_000));
     }
     void request
-      .then((d) => { if (live) setData(d); })
+      .then((d) => { if (live) setResult({ key, data: d }); })
       .finally(() => { if (live) setLoading(false); });
     return () => { live = false; };
   }, [key, productId, days]);
 
-  return { history: data, loading };
+  return { history: result?.key === key ? result.data : null, loading: result?.key !== key || loading };
 }

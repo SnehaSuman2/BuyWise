@@ -14,6 +14,7 @@ from app.api.v1 import (
     community,
     internal,
     meta,
+    oauth,
     products,
     retailers,
     search,
@@ -23,6 +24,7 @@ router = APIRouter(prefix="/api/v1")
 for r in (
     meta.router,
     auth.router,
+    oauth.router,
     search.router,
     products.router,
     catalog.router,

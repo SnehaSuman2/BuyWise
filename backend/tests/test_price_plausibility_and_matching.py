@@ -193,7 +193,9 @@ def test_cheap_spam_cannot_become_the_reference_price():
 
 
 @pytest.mark.asyncio
-async def test_stale_spam_offer_is_retired_once_real_offers_arrive(client, monkeypatch):
+async def test_stale_spam_offer_is_retired_once_real_offers_arrive(
+    client, admin_headers, monkeypatch
+):
     """A spam offer recorded before the filters existed keeps setting the product's
     lowest price for ever unless something retires it. Persisting the product again
     with enough genuine offers must do exactly that, and the product page must agree."""
@@ -229,7 +231,9 @@ async def test_stale_spam_offer_is_retired_once_real_offers_arrive(client, monke
 
     # The spam offer's price observations go with it: history must not keep
     # showing ₹148 as the product's current or lowest price.
-    history = await client.get(f"/api/v1/products/{product['id']}/history?days=90")
+    history = await client.get(
+        f"/api/v1/products/{product['id']}/history?days=90", headers=admin_headers
+    )
     assert history.status_code == 200
     stats = history.json()["stats"]
     assert stats is not None and stats["current_price"] >= 129900, stats

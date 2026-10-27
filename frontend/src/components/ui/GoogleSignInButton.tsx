@@ -10,12 +10,12 @@ declare global {
 }
 
 /** Google Identity Services button. Renders nothing unless GOOGLE_CLIENT_ID is configured on the backend. */
-export default function GoogleSignInButton({ onCredential }: { onCredential: (idToken: string) => void }) {
+export default function GoogleSignInButton({ onCredential, configuredClientId }: { onCredential: (idToken: string) => void; configuredClientId?: string }) {
   const { meta } = useMeta();
   const ref = useRef<HTMLDivElement>(null);
   const [ready, setReady] = useState(false);
-  const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || null;
-  const enabled = Boolean(meta?.google_auth_enabled && clientId);
+  const clientId = configuredClientId || process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || null;
+  const enabled = Boolean((configuredClientId || meta?.google_auth_enabled) && clientId);
   const callbackRef = useRef(onCredential);
   useEffect(() => { callbackRef.current = onCredential; }, [onCredential]);
 

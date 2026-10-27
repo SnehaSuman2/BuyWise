@@ -427,7 +427,7 @@ class ShoppingAgent:
             else ([intent.product_query] if intent.product_query else [])
         )
         if product_id and not queries:
-            rec = await self.recommender.generate(product_id)
+            rec = await self.recommender.generate(product_id, full=full)
             if rec:
                 from app.services.catalog import load_offers, load_product
 
@@ -453,8 +453,11 @@ class ShoppingAgent:
                             recommendations=rec,
                         )
                     )
-                    history = await self.recommender.history.get_history(product_id, 90)
-                    price_signal = history.signal.model_dump() if history else None
+                    if full:
+                        history = await self.recommender.history.get_history(
+                            product_id, 90, max_days=ent.history_days
+                        )
+                        price_signal = history.signal.model_dump() if history else None
         for q in queries[:3]:
             try:
                 result = await self.search.search(
@@ -501,9 +504,36 @@ class ShoppingAgent:
                     "Retailer-by-retailer comparison and picks are part of BuyWise Pro; "
                     "showing the lowest price only."
                 )
-            if intent.kind in ("buy_timing", "where_to_buy") and top:
-                history = await self.recommender.history.get_history(top[0].id, 90)
+            if full and intent.kind in ("buy_timing", "where_to_buy") and top:
+                history = await self.recommender.history.get_history(
+                    top[0].id, 90, max_days=ent.history_days
+                )
                 price_signal = history.signal.model_dump() if history else None
+
+        # Apply the same boundary to direct product-id requests and text search.
+        if not see_prices:
+            products = [
+                AgentProductResult(
+                    product=pr.product.model_copy(
+                        update={
+                            "lowest_price": None,
+                            "highest_price": None,
+                            "offer_count": 0,
+                            "retailers": [],
+                            "locked": True,
+                        }
+                    ),
+                    recommendations=pr.recommendations,
+                )
+                for pr in products
+            ]
+        if not full:
+            price_signal = None
+            notice = (
+                "Retailer comparison, price history and buy/wait guidance are part of BuyWise Pro."
+            )
+            if products and notice not in warnings:
+                warnings.append(notice)
 
         answer = await self._compose_answer(
             query, intent, products, trust_payload, price_signal, is_demo
@@ -543,6 +573,7 @@ class ShoppingAgent:
                 {
                     "name": p.product.name,
                     "lowest_estimated_final_price_inr": p.product.lowest_price,
+                    "pro_insights_locked": bool(p.recommendations and p.recommendations.locked),
                     "retailers": p.product.retailers,
                     "recommendations": [
                         {
@@ -614,6 +645,10 @@ class ShoppingAgent:
                 lines.append(
                     f"{first.product.name}: {price_signal.get('action', '').replace('_', ' ')}. "
                     f"{price_signal.get('reasoning', '')}"
+                )
+            elif first.recommendations and first.recommendations.locked:
+                lines.append(
+                    f"{first.product.name}: price history and buy/wait guidance are part of BuyWise Pro."
                 )
             else:
                 lines.append(

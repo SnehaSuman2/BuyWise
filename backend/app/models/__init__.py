@@ -14,7 +14,7 @@ from app.models.retailer import Retailer, Seller
 from app.models.review import Review, ReviewAnalysis
 from app.models.search import Search
 from app.models.trust import TrustEvent, TrustEvidence, TrustScore
-from app.models.user import RefreshSession, SavedProduct, User
+from app.models.user import OAuthAttempt, OAuthIdentity, RefreshSession, SavedProduct, User
 
 __all__ = [
     "AffiliateClick",
@@ -44,6 +44,8 @@ __all__ = [
     "TrustEvent",
     "TrustEvidence",
     "TrustScore",
+    "OAuthAttempt",
+    "OAuthIdentity",
     "RefreshSession",
     "SavedProduct",
     "User",

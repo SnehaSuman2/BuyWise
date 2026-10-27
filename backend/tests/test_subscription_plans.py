@@ -11,7 +11,8 @@ def test_the_three_paid_periods_and_their_prices():
     assert by_id["pro_monthly"].price_inr == 99 and by_id["pro_monthly"].period_days == 30
     assert by_id["pro_6month"].price_inr == 449 and by_id["pro_6month"].period_days == 180
     assert by_id["pro_yearly"].price_inr == 799 and by_id["pro_yearly"].period_days == 365
-    assert by_id["free"].price_inr == 0
+    assert "free" not in by_id
+    assert len(by_id) == 3
 
 
 def test_savings_are_real_and_never_overstated():
@@ -51,11 +52,11 @@ def test_an_unknown_plan_is_refused():
 
 
 @pytest.mark.asyncio
-async def test_the_plans_endpoint_serves_all_four(client):
+async def test_the_plans_endpoint_serves_only_paid_subscriptions(client):
     r = await client.get("/api/v1/subscription/plans")
     assert r.status_code == 200
     ids = [p["id"] for p in r.json()]
-    assert ids == ["free", "pro_monthly", "pro_6month", "pro_yearly"], ids
+    assert ids == ["pro_monthly", "pro_6month", "pro_yearly"], ids
 
 
 @pytest.mark.asyncio

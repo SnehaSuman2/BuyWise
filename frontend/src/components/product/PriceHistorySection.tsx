@@ -47,7 +47,7 @@ export default function PriceHistorySection({
           <TrendingDown className="w-6 h-6 text-purple-500" /> Price history
         </h2>
         {data && !data.locked && <DataBadge meta={data.meta} />}
-        {!data?.locked && (
+        {data && !data.locked && (
           <div className="flex items-center gap-1 ml-auto flex-wrap">
             {WINDOWS.map((w) => (
               <button

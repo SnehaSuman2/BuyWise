@@ -13,15 +13,7 @@ import LockedPanel from "@/components/product/LockedPanel";
 import { usePriceHistory } from "@/lib/usePriceHistory";
 import type { OfferComparison, RecommendationSet, TrustScoreData } from "@/lib/types";
 
-/**
- * The parts of a product page that depend on who is looking.
- *
- * The page is rendered on the server without a session, so the server's first
- * answer is always the free view: the lowest price, with the comparison and picks
- * withheld. Once a signed-in viewer hydrates, the same endpoints are fetched again
- * with their session and the server decides what they may see. The decision is
- * the server's in both cases; this component only asks twice.
- */
+/** Fetch for guests and subscribers; discard snapshots when the viewer changes. */
 export default function ComparisonSections({
   productId,
   initialOffers,
@@ -33,18 +25,21 @@ export default function ComparisonSections({
   initialRecs: RecommendationSet | null;
   trusts: TrustScoreData[] | null;
 }) {
-  const { user } = useAuth();
-  const [offers, setOffers] = useState(initialOffers);
-  const [recs, setRecs] = useState(initialRecs);
+  const { user, loading: authLoading } = useAuth();
+  const viewer = `${user?.id ?? "anon"}:${user?.plan ?? "none"}:${user?.role ?? "none"}:${productId}`;
+  const [snapshot, setSnapshot] = useState<{ viewer: string; offers: OfferComparison | null; recs: RecommendationSet | null } | null>(null);
   const { history } = usePriceHistory(productId, 90);
+  const offers = snapshot?.viewer === viewer ? snapshot.offers : initialOffers;
+  const recs = snapshot?.viewer === viewer ? snapshot.recs : initialRecs;
+  const loading = authLoading || snapshot?.viewer !== viewer;
 
   useEffect(() => {
-    if (!user) return;
+    if (authLoading) return;
     let live = true;
-    api.offers(productId).then((o) => { if (live) setOffers(o); }).catch(() => {});
-    api.recommendations(productId).then((r) => { if (live) setRecs(r); }).catch(() => {});
+    Promise.all([api.offers(productId).catch(() => null), api.recommendations(productId).catch(() => null)])
+      .then(([offers, recs]) => { if (live) setSnapshot({ viewer, offers, recs }); });
     return () => { live = false; };
-  }, [user, productId]);
+  }, [authLoading, viewer, productId]);
 
   const best = recs?.recommendations.find((r) => r.category === "BEST_OVERALL") ?? null;
   const bestTrust = best ? trusts?.find((t) => t.retailer_id === best.retailer_id) ?? null : null;
@@ -75,7 +70,7 @@ export default function ComparisonSections({
 
       <section id="recommendation" className="mb-16">
         <div className="flex flex-wrap items-center gap-3 mb-6"><h2 className="text-2xl font-bold flex items-center gap-2"><Award className="w-6 h-6 text-indigo-500" /> Shopping decision</h2>{recs && !recs.locked && <DataBadge meta={recs.meta} />}</div>
-        {recs ? <RecommendationCards recommendations={recs.recommendations} locked={Boolean(recs.locked)} /> : <p className="text-sm text-muted-foreground">Recommendations unavailable right now.</p>}
+        {loading && !recs ? <div role="status" aria-label="Loading shopping insights" className="animate-shimmer h-48 rounded-2xl" /> : recs ? <RecommendationCards recommendations={recs.recommendations} locked={Boolean(recs.locked)} /> : <p className="text-sm text-muted-foreground">Recommendations unavailable right now.</p>}
         {recs?.ai_explanation && !recs.locked && (
           <div className="glass rounded-2xl p-5 mt-6">
             <div className="flex items-center gap-2 text-sm font-semibold mb-2"><Sparkles className="w-4 h-4 text-indigo-500" /> AI recommendation <span className="text-xs font-normal text-muted-foreground">({recs.ai_provider === "demo" ? "template explanation — AI provider not configured" : `explained by ${recs.ai_provider}, grounded in the data above`})</span></div>
@@ -85,9 +80,9 @@ export default function ComparisonSections({
       </section>
 
       <section id="offers" className="mb-16">
-        <div className="flex flex-wrap items-center gap-3 mb-6"><h2 className="text-2xl font-bold flex items-center gap-2"><IndianRupee className="w-6 h-6 text-emerald-500" /> {locked ? "Lowest price" : "Compare offers"}</h2>{offers && <DataBadge meta={offers.meta} />}</div>
+        <div className="flex flex-wrap items-center gap-3 mb-6"><h2 className="text-2xl font-bold flex items-center gap-2"><IndianRupee className="w-6 h-6 text-emerald-500" /> Compare offers</h2>{offers && <DataBadge meta={offers.meta} />}</div>
         {offers?.meta.warnings.map((w) => <p key={w} className="text-sm text-amber-600 mb-2 flex gap-2"><Info className="w-4 h-4 mt-0.5" />{w}</p>)}
-        {offers?.locked && offers.offers.length === 0 ? (
+        {loading && !offers ? <div role="status" aria-label="Loading retailer comparison" className="animate-shimmer h-48 rounded-2xl" /> : offers?.locked && offers.offers.length === 0 ? (
           <LockedPanel hiddenOffers={offers.hidden_offers} hiddenRetailers={offers.hidden_retailers} what="the price comparison" />
         ) : (
           <div className="glass rounded-2xl overflow-hidden">

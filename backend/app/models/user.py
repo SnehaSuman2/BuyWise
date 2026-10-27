@@ -70,3 +70,25 @@ class SavedProduct(Base, UUIDMixin, TimestampMixin):
 
     user = relationship("User", back_populates="saved_products")
     product = relationship("Product", lazy="joined")
+
+
+class OAuthIdentity(Base, UUIDMixin):
+    """Stable external identity; deliberately never linked by matching email."""
+
+    __tablename__ = "oauth_identities"
+    __table_args__ = (UniqueConstraint("provider", "subject", name="uq_oauth_provider_subject"),)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUIDType, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    provider: Mapped[str] = mapped_column(String(20), nullable=False)
+    subject: Mapped[str] = mapped_column(String(255), nullable=False)
+
+
+class OAuthAttempt(Base):
+    """One-use, ten-minute login state bound to a browser-held verifier."""
+
+    __tablename__ = "oauth_attempts"
+    state_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    verifier_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider: Mapped[str] = mapped_column(String(20), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

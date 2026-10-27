@@ -38,7 +38,7 @@ export default function AccountPage() {
 
       <section className="glass rounded-2xl p-6 space-y-3">
         <h2 className="font-semibold">Profile</h2>
-        <div className="text-sm text-muted-foreground">Email: {user.email} · Username: {user.username} · Plan: <span className="capitalize">{user.plan}</span> · Sign-in: {user.auth_provider}</div>
+        <div className="text-sm text-muted-foreground">Email: {user.email} · Username: {user.username} · Plan: <span className="capitalize">{user.plan === "pro" ? "BuyWise Pro" : "No active Pro plan"}</span> · Sign-in: {user.auth_provider}</div>
         <label className="block text-sm">Display name<input value={displayName} onChange={(e) => setDisplayName(e.target.value)} className={`${field} mt-1`} maxLength={100} /></label>
         <button onClick={() => run(async () => { await api.updateAccount({ display_name: displayName }); await refreshUser(); }, "Profile updated")} className="px-4 py-2 rounded-xl gradient-primary text-white text-sm font-medium">Save</button>
       </section>

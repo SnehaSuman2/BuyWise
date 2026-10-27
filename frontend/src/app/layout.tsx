@@ -25,12 +25,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en-IN" suppressHydrationWarning>
       <body className="min-h-screen bg-background text-foreground antialiased">
+        <a href="#main-content" className="skip-link">Skip to content</a>
         <MetaProvider>
           <AuthProvider>
             <ApiStatusBanner />
             <DemoBanner />
             <Header />
-            <main className="min-h-[calc(100vh-4rem)]">{children}</main>
+            <main id="main-content" tabIndex={-1} className="min-h-[calc(100vh-4rem)]">{children}</main>
             <Footer />
           </AuthProvider>
         </MetaProvider>

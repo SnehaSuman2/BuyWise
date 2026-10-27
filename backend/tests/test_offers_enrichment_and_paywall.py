@@ -266,13 +266,15 @@ async def test_pro_and_admin_see_prices_behind_the_paywall(
         assert not history["locked"]
 
 
-def test_free_plan_copy_matches_the_paywall(paywall):
+def test_public_plan_catalogue_only_promotes_paid_subscriptions(paywall):
     from app.services.subscription_service import plans
 
-    free = next(p for p in plans() if p.id == "free")
-    joined = " ".join(free.features)
-    assert "Lowest price" not in joined and "price history" not in joined.lower()
-    assert "Trust Scores" in joined
+    advertised = plans()
+    assert len(advertised) == 3
+    assert all(p.id != "free" and p.price_inr > 0 for p in advertised)
+    assert all(
+        any("price history" in feature.lower() for feature in p.features) for p in advertised
+    )
 
 
 @pytest.mark.asyncio

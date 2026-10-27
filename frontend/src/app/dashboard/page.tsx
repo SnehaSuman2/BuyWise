@@ -65,8 +65,8 @@ export default function DashboardPage() {
           </div>
           <div className="space-y-4">
             <Section icon={Crown} title="Subscription" action={<Link href="/pricing" className="text-xs text-indigo-500 hover:underline">{data.subscription.is_pro ? "Manage" : "Upgrade"}</Link>}>
-              <div className="text-sm"><span className={`font-semibold ${data.subscription.is_pro ? "text-amber-500" : ""}`}>{data.subscription.is_pro ? "BuyWise Pro" : "Free plan"}</span>{data.subscription.current_period_end && <div className="text-xs text-muted-foreground">{data.subscription.cancel_at_period_end ? "Ends" : "Renews"} {formatDate(data.subscription.current_period_end)}</div>}
-                <ul className="text-xs text-muted-foreground mt-2 space-y-0.5"><li>Alerts: {data.subscription.usage.alerts}/{data.subscription.limits.alerts}</li><li>Saved: {data.subscription.usage.saved_products}/{data.subscription.limits.saved_products}</li><li>History: {data.subscription.limits.history_days} days</li></ul>
+              <div className="text-sm"><span className={`font-semibold ${data.subscription.is_pro ? "text-amber-500" : ""}`}>{data.subscription.is_pro ? "BuyWise Pro" : "No active Pro plan"}</span>{data.subscription.current_period_end && <div className="text-xs text-muted-foreground">{"Ends"} {formatDate(data.subscription.current_period_end)}</div>}
+                <ul className="text-xs text-muted-foreground mt-2 space-y-0.5"><li>Alerts: {data.subscription.usage.alerts}/{data.subscription.limits.alerts}</li><li>Saved: {data.subscription.usage.saved_products}/{data.subscription.limits.saved_products}</li>{data.subscription.is_pro && <li>History: {data.subscription.limits.history_days} days</li>}</ul>
               </div>
             </Section>
             <Section icon={CreditCard} title="Payments">

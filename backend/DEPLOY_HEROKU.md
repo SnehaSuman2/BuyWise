@@ -101,3 +101,13 @@ Google, and update the Razorpay webhook URL.
 | Neon database (unchanged) | free tier | not billed by Heroku |
 
 Leaving about $6 a month spare, for 24 months.
+
+## Version 2: Yahoo/Microsoft sign-in and experiment setup
+
+See [V2_GUIDE.md](../V2_GUIDE.md) for the complete rollout and measurement steps.
+Set `YAHOO_CLIENT_ID`, `YAHOO_CLIENT_SECRET`, `MICROSOFT_CLIENT_ID` and
+`MICROSOFT_CLIENT_SECRET` in the backend config. Register
+`<NEXT_PUBLIC_APP_URL>/auth/callback` with both providers (the frontend URL).
+The new `d4e5f6a7b8c9` migration must run before social sign-in is used.
+Keep secrets on the backend. The frontend only needs the API URL and the public
+`NEXT_PUBLIC_HOMEPAGE_EXPERIMENT` rollout flag (`v2` by default, `ab` for 50/50).

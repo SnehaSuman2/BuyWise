@@ -8,6 +8,7 @@ from app.core.database import get_db
 from app.core.rate_limit import limiter
 from app.core.security import get_current_user
 from app.models import User
+from app.providers.auth.oauth import providers
 from app.schemas.user import (
     GoogleLogin,
     PasswordChange,
@@ -80,6 +81,7 @@ async def auth_providers():
     """Public: which sign-in methods are available (no secrets)."""
     return {
         "password": True,
+        **{name: bool(p.client_id and p.client_secret) for name, p in providers().items()},
         "google": settings.google_auth_enabled,
         "google_client_id": settings.GOOGLE_CLIENT_ID or None,
     }

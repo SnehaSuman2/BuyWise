@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Bell, Bookmark, BookmarkCheck, X } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
+import { track } from "@/lib/analytics";
 import { useAuth } from "@/lib/auth";
 import { formatPrice } from "@/lib/utils";
 
@@ -30,7 +31,7 @@ export default function ProductActions({ productId, currentPrice }: { productId:
     setBusy(true);
     try {
       if (saved) { await api.unsaveProduct(productId); setSaved(false); }
-      else { await api.saveProduct(productId); setSaved(true); }
+      else { await api.saveProduct(productId); setSaved(true); track("save_product", { product_id: productId }); }
     } catch (e) { setMsg({ ok: false, text: (e as ApiError).message }); } finally { setBusy(false); }
   };
 
@@ -39,6 +40,7 @@ export default function ProductActions({ productId, currentPrice }: { productId:
     setBusy(true); setMsg(null);
     try {
       await api.createAlert(type === "target_price" ? { product_id: productId, alert_type: "target_price", target_price: target } : { product_id: productId, alert_type: "percent_drop", drop_percent: percent });
+      track("create_price_alert", { product_id: productId, alert_type: type });
       setMsg({ ok: true, text: "Alert created. We'll email you when the price qualifies." });
       setOpen(false);
     } catch (e) { setMsg({ ok: false, text: (e as ApiError).message }); } finally { setBusy(false); }
