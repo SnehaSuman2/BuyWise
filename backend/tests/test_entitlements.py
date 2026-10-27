@@ -38,15 +38,17 @@ async def _make_pro(db, email: str, plan: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_visitors_get_the_lowest_price_but_not_the_comparison(client, demo_product):
+async def test_visitors_get_a_limited_preview_without_ranked_prices(client, demo_product):
     r = await client.get(f"/api/v1/products/{demo_product}/offers")
     assert r.status_code == 200
     body = r.json()
     assert body["locked"] is True
-    assert len(body["offers"]) == 1, "only the cheapest offer is sent"
+    assert len(body["offers"]) <= 2
     assert body["picks"] == []
-    assert body["lowest_final_price"] == body["offers"][0]["price"]["estimated_final_price"]
-    assert body["hidden_offers"] >= 1 and body["total_offers"] == body["hidden_offers"] + 1
+    assert body["lowest_final_price"] is None
+    assert body["hidden_offers"] >= 1 and body["total_offers"] == body["hidden_offers"] + len(
+        body["offers"]
+    )
 
     recs = await client.get(f"/api/v1/products/{demo_product}/recommendations")
     assert recs.status_code == 200
@@ -56,7 +58,7 @@ async def test_visitors_get_the_lowest_price_but_not_the_comparison(client, demo
 @pytest.mark.asyncio
 async def test_free_accounts_are_gated_too(client, auth_headers, demo_product):
     r = await client.get(f"/api/v1/products/{demo_product}/offers", headers=auth_headers)
-    assert r.json()["locked"] is True and len(r.json()["offers"]) == 1
+    assert r.json()["locked"] is True and len(r.json()["offers"]) <= 2
 
 
 @pytest.mark.asyncio

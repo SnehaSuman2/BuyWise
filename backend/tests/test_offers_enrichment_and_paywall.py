@@ -215,7 +215,9 @@ async def _make_pro(db, email, plan="pro_monthly"):
 
 
 @pytest.mark.asyncio
-async def test_without_pro_no_price_leaves_the_server(client, auth_headers, paywall, demo_product):
+async def test_without_pro_only_comparison_preview_can_show_prices(
+    client, auth_headers, paywall, demo_product
+):
     for headers in ({}, auth_headers):
         r = await client.post("/api/v1/search", headers=headers, json={"query": "Sony WH-1000XM5"})
         for x in r.json()["results"]:
@@ -231,7 +233,7 @@ async def test_without_pro_no_price_leaves_the_server(client, auth_headers, payw
         offers = (
             await client.get(f"/api/v1/products/{demo_product}/offers", headers=headers)
         ).json()
-        assert offers["locked"] is True and offers["offers"] == [] and offers["picks"] == []
+        assert offers["locked"] is True and len(offers["offers"]) <= 2 and offers["picks"] == []
         assert offers["lowest_final_price"] is None and offers["hidden_offers"] >= 1
         history = (
             await client.get(f"/api/v1/products/{demo_product}/history?days=90", headers=headers)

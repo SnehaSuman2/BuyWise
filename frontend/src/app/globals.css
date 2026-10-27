@@ -229,7 +229,8 @@ button:disabled { cursor: wait; }
 .v2-container { max-width: 1200px; margin-inline: auto; padding-inline: 28px; }
 .v2-hero { background: radial-gradient(ellipse at 82% 26%, #e9e2f340, transparent 52%), var(--v2-tint); }
 .v2-hero-grid { display: grid; grid-template-columns: 1.2fr 1fr; gap: 64px; align-items: center; padding-block: 66px 72px; }
-.v2-eyebrow { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; margin-bottom: 23px; color: var(--v2-muted); }
+.v2-eyebrow { display: inline-flex; align-items: center; gap: 8px; padding: 9px 13px; border: 1px solid #8470b540; border-radius: 999px; background: var(--v2-surface); font-size: 13px; font-weight: 600; margin-bottom: 23px; color: var(--v2-ink); }
+.v2-eyebrow svg { flex-shrink: 0; }
 .v2-dot { width: 7px; height: 7px; background: #8470b5; border-radius: 100%; }
 .v2-home h1 { font-size: clamp(38px, 4.4vw, 59px); font-weight: 650; letter-spacing: -2.9px; line-height: 1.12; }
 .v2-home h1 span { color: var(--v2-purple); }

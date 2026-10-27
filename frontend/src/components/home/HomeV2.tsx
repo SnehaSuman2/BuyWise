@@ -12,7 +12,7 @@ const categories = [
   { name: "Laptops", query: "MacBook Air M3", icon: Laptop, note: "More possibilities, less searching", color: "mint" },
 ];
 const faqs = [
-  ["What does BuyWise Pro unlock?", "Pro unlocks retailer prices and comparisons, best-overall and safest picks, recorded price history, and buy/wait guidance when enough observations exist. You can find and identify products before choosing a plan."],
+  ["What does BuyWise Pro unlock?", "Preview selected retailer offers on product pages when available. Pro unlocks the full comparison, best-overall and safest picks, recorded price history, and buy/wait guidance when enough observations exist."],
   ["Can I buy directly on BuyWise?", "BuyWise helps you compare. When you choose an offer, you visit the retailer to complete your purchase. Always confirm the final price, delivery and return policy at checkout."],
   ["What does the Trust Score mean?", "It is BuyWise’s assessment of public evidence and retailer policies, not a guarantee. Open the score on a product page to see the reasons and any concerns before deciding."],
   ["Are these prices always live?", "Availability and prices can change. Results show their data status, and demo results are clearly labelled. Unknown delivery charges are flagged, and price history only includes observations we have actually recorded."],
@@ -45,9 +45,9 @@ export default function HomeV2() {
   }
   return <div className="v2-home">
     <section className="v2-hero"><div className="v2-container v2-hero-grid"><div>
-      <div className="v2-eyebrow"><span className="v2-dot" /> A little research. A smarter purchase.</div>
+      <div className="v2-eyebrow"><Sparkles size={16} aria-hidden="true" /> AI-powered shopping comparison platform</div>
       <h1>Love the product.<br /><span>Feel good about<br className="hidden xl:block" /> the price.</span></h1>
-      <p className="v2-intro">One search to compare prices, check seller trust, and find your next buy with confidence.</p>
+      <p className="v2-intro">BuyWise brings retailer offers, seller trust and price insights together, with AI to help explain your options. Search a product to get started.</p>
       <form className="v2-search" role="search" onSubmit={(e) => { e.preventDefault(); search(query, "form"); }}>
         <div className="v2-search-modes" aria-label="Search method">
           <button type="button" aria-pressed={mode === "name"} onClick={() => { setMode("name"); setError(""); input.current?.focus(); }}><Search size={16} /> Product name</button>
@@ -57,7 +57,7 @@ export default function HomeV2() {
         <label htmlFor="v2-query" className="sr-only">{mode === "name" ? "Product name or model" : "Product link"}</label>
         <div className="v2-search-input"><Search size={22} aria-hidden="true" /><input ref={input} id="v2-query" value={query} onChange={(e) => { setQuery(e.target.value); setError(""); }} placeholder={mode === "name" ? "What’s on your wishlist?" : "https://www.amazon.in/…"} aria-describedby="v2-search-help" aria-invalid={Boolean(error)} /><button className="v2-button" type="submit">Compare <ArrowRight size={18} /></button></div>
         <input ref={photo} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={(e) => { void choosePhoto(e.target.files?.[0]); e.target.value = ""; }} />
-        <p id="v2-search-help" className="v2-search-help">{mode === "name" ? "Add a model or storage size for a closer match." : "Copy a product page link from your retailer."} Retailer prices and insights unlock with Pro.</p>
+        <p id="v2-search-help" className="v2-search-help">{mode === "name" ? "Add a model or storage size for a closer match." : "Copy a product page link from your retailer."} Preview selected offers. Unlock top picks, all retailers and price history with Pro.</p>
         {error && <p className="v2-form-error" role="alert">{error}</p>}
       </form>
       <div className="v2-examples"><span>Try a search</span>{["Sony WH-1000XM5", "iPhone 15 128GB"].map(q => <button key={q} onClick={() => search(q, "example")}>{q} <ArrowUpRight size={13} /></button>)}</div>

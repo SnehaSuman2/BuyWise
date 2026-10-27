@@ -224,7 +224,7 @@ async def test_stale_spam_offer_is_retired_once_real_offers_arrive(
     assert healed["lowest_price"] == 129900, healed
     assert "Meesho" not in healed["retailers"]
 
-    offers = await client.get(f"/api/v1/products/{product['id']}/offers")
+    offers = await client.get(f"/api/v1/products/{product['id']}/offers", headers=admin_headers)
     assert offers.status_code == 200
     prices = sorted(o["price"]["estimated_final_price"] for o in offers.json()["offers"])
     assert 148 not in prices and prices[0] == 129900

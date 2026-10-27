@@ -122,7 +122,11 @@ class OfferService:
         res = await enricher.offers_for(token=token, product_id=product_id)
         providers = [f"{enricher.name}:{res.engine or enricher.engine}"]
         if not res.ok:
-            return [], providers, [f"Store prices from Google unavailable ({res.error})."]
+            return (
+                [],
+                providers,
+                ["Some retailers could not be refreshed. Showing available recorded offers."],
+            )
         return list(res.items), providers, []
 
     @staticmethod
@@ -200,12 +204,13 @@ class OfferService:
         refresh: bool = False,
         full: bool = True,
         prices: bool = True,
+        allow_preview: bool = False,
     ) -> OfferComparison | None:
         """The comparison for a product.
 
-        With full=False (a visitor without Pro) the result keeps only the cheapest
-        exact offer and reports how many offers and retailers it is holding back.
-        The ranking still runs over everything so lowest_final_price is honest.
+        The product comparison can opt into a limited public preview. Ranked
+        retailers, their duplicate listings, and the overall lowest price remain
+        protected. Other callers retain their existing price-access restrictions.
         """
         product = await catalog.load_product(self.db, product_id)
         if product is None:
@@ -263,7 +268,38 @@ class OfferService:
         is_demo = bool(offers) and all(o.is_demo for o in offers)
         lowest = min((r.price.estimated_final_price for r in exact), default=None)
         locked, hidden_offers, hidden_retailers = False, 0, 0
-        if not prices and responses:
+        locked_categories: list[str] = []
+        if allow_preview and not full and responses:
+            picked_ids = {p.offer_id for p in picks}
+            protected_retailers = {
+                r.retailer.id
+                for r in responses
+                if r.id in picked_ids
+                or (lowest is not None and r.price.estimated_final_price <= lowest)
+            }
+            locked_categories = list(dict.fromkeys(p.category for p in picks))
+            preview = []
+            seen_retailers = set()
+            for r in sorted(responses, key=lambda r: (r.price.estimated_final_price, str(r.id))):
+                if (
+                    r.retailer.id in protected_retailers
+                    or r.retailer.id in seen_retailers
+                    or r.match.match_type != MatchType.EXACT.value
+                    or r.availability == "out_of_stock"
+                    or r.condition != "new"
+                    or (lowest is not None and r.price.estimated_final_price <= lowest)
+                ):
+                    continue
+                preview.append(r)
+                seen_retailers.add(r.retailer.id)
+                if len(preview) == 2:
+                    break
+            visible_ids = {r.id for r in preview}
+            hidden = [r for r in responses if r.id not in visible_ids]
+            hidden_offers = len(hidden)
+            hidden_retailers = len({r.retailer.id for r in hidden})
+            responses, picks, locked, lowest = preview, [], bool(hidden), None
+        elif not prices and responses:
             # Nothing priced leaves the server: not even the cheapest offer.
             hidden_offers = len(responses)
             hidden_retailers = len({r.retailer.id for r in responses})
@@ -286,6 +322,7 @@ class OfferService:
             locked=locked,
             hidden_offers=hidden_offers,
             hidden_retailers=hidden_retailers,
+            locked_pick_categories=locked_categories,
             meta=DataMeta(
                 data_mode="demo"
                 if is_demo

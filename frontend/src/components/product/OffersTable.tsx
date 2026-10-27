@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import Link from "next/link";
 import { ShieldCheck, ExternalLink, ChevronDown, ChevronUp, Info, Store } from "lucide-react";
 import VerificationBadge from "@/components/trust/VerificationBadge";
@@ -34,13 +34,17 @@ export default function OffersTable({ comparison }: { comparison: OfferCompariso
   const [open, setOpen] = useState<string | null>(null);
   const cheapestId = comparison.picks.find((p) => p.category === "CHEAPEST")?.offer_id;
   const bestId = comparison.picks.find((p) => p.category === "BEST_OVERALL")?.offer_id;
-  if (!comparison.offers.length) return <p className="text-sm text-muted-foreground p-6">No offers recorded yet for this product.</p>;
+  if (!comparison.offers.length && !comparison.locked) return <p className="text-sm text-muted-foreground p-6">No offers recorded yet for this product.</p>;
   return (
-    <div className="overflow-x-auto">
-      {comparison.locked && (
-        <div className="px-4 pt-4 pb-2 text-xs text-muted-foreground">Lowest price found. The comparison across every retailer is part of Pro.</div>
-      )}
-      <table className="w-full text-sm">
+    <div>
+      {comparison.locked && <div className="p-4 sm:p-5">
+        <LockedPanel hiddenOffers={comparison.hidden_offers} hiddenRetailers={comparison.hidden_retailers} offerPreview={comparison.locked_pick_categories ?? []} />
+      </div>}
+      {comparison.locked && <div className="px-4 pt-2 pb-4">
+        <h3 className="font-semibold text-sm">{comparison.offers.length ? "Free preview offers" : "No free preview offers for this product yet"}</h3>
+        <p className="mt-1 text-xs text-muted-foreground">{comparison.offers.length ? `Showing ${comparison.offers.length} other retailer${comparison.offers.length === 1 ? "" : "s"}. These are a limited selection, not our top-ranked or lowest-price picks. Unlock Pro to compare every available offer.` : "Available offers are reserved for the full Pro comparison. We’ll show a preview when other eligible retailers are available."}</p>
+      </div>}
+      {comparison.offers.length > 0 && <div className="overflow-x-auto"><table className="w-full text-sm">
         <thead>
           <tr className="border-b border-border/40 text-muted-foreground">
             <th className="text-left py-3 px-4 font-medium">Retailer / seller</th>
@@ -57,8 +61,8 @@ export default function OffersTable({ comparison }: { comparison: OfferCompariso
           {comparison.offers.map((o) => {
             const isOpen = open === o.id;
             return (
-              <>
-                <tr key={o.id} className={`border-b border-border/20 hover:bg-muted/30 transition-colors ${o.id === bestId ? "bg-indigo-500/5" : o.id === cheapestId ? "bg-emerald-500/5" : ""} ${o.match.match_type !== "exact_match" ? "opacity-80" : ""}`}>
+              <Fragment key={o.id}>
+                <tr className={`border-b border-border/20 hover:bg-muted/30 transition-colors ${o.id === bestId ? "bg-indigo-500/5" : o.id === cheapestId ? "bg-emerald-500/5" : ""} ${o.match.match_type !== "exact_match" ? "opacity-80" : ""}`}>
                   <td className="py-3 px-4">
                     <div className="flex items-center gap-2">
                       <div className="w-8 h-8 rounded-lg bg-muted/50 flex items-center justify-center shrink-0"><Store className="w-4 h-4 text-muted-foreground" /></div>
@@ -106,15 +110,12 @@ export default function OffersTable({ comparison }: { comparison: OfferCompariso
                 {isOpen && (
                   <tr key={`${o.id}-details`} className="bg-muted/20 border-b border-border/20"><td colSpan={8} className="px-6 py-4"><PriceBreakdown o={o} /></td></tr>
                 )}
-              </>
+              </Fragment>
             );
           })}
         </tbody>
-      </table>
-      {comparison.locked && (
-        <div className="p-4"><LockedPanel hiddenOffers={comparison.hidden_offers} hiddenRetailers={comparison.hidden_retailers} what="the full comparison" /></div>
-      )}
-      <p className="px-4 py-3 text-xs text-muted-foreground">Sorted by estimated final price. Only exact matches are used for picks; variants and similar products are shown for context. Prices can differ by pincode and change at checkout. Sellers marked <strong>Unverified</strong> have not been assessed yet — BuyWise gathers evidence on them in the background, and merchants it assesses as high risk are withheld entirely. Sellers are never able to pay for inclusion or a better score.</p>
+      </table></div>}
+      <p className="px-4 py-3 text-xs text-muted-foreground">Visible offers are sorted by estimated final price. Only exact matches are used for picks; variants and similar products are shown for context. Prices can differ by pincode and change at checkout. Sellers marked <strong>Unverified</strong> have not been assessed yet — BuyWise gathers evidence on them in the background, and merchants it assesses as high risk are withheld entirely. Sellers are never able to pay for inclusion or a better score.</p>
     </div>
   );
 }

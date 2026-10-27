@@ -108,7 +108,11 @@ async def get_product_offers(
         refresh = False
     ent = await entitlements_for(db, user)
     result = await OfferService(db).compare(
-        product_id, refresh=refresh, full=ent.compare_offers, prices=ent.see_prices
+        product_id,
+        refresh=refresh,
+        full=ent.compare_offers,
+        prices=ent.see_prices,
+        allow_preview=True,
     )
     if result is None:
         raise HTTPException(status_code=404, detail="Product not found")

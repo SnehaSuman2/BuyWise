@@ -288,10 +288,11 @@ export interface OfferComparison {
   offers: Offer[];
   picks: OfferPick[];
   lowest_final_price?: number | null;
-  /** True when the server sent only the cheapest offer because the viewer is not on Pro. */
+  /** Only a limited preview is included; Pro retailer details stay on the server. */
   locked?: boolean;
   hidden_offers?: number;
   hidden_retailers?: number;
+  locked_pick_categories?: string[];
   meta: DataMeta;
 }
 

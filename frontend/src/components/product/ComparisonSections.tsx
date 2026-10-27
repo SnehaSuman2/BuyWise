@@ -82,9 +82,7 @@ export default function ComparisonSections({
       <section id="offers" className="mb-16">
         <div className="flex flex-wrap items-center gap-3 mb-6"><h2 className="text-2xl font-bold flex items-center gap-2"><IndianRupee className="w-6 h-6 text-emerald-500" /> Compare offers</h2>{offers && <DataBadge meta={offers.meta} />}</div>
         {offers?.meta.warnings.map((w) => <p key={w} className="text-sm text-amber-600 mb-2 flex gap-2"><Info className="w-4 h-4 mt-0.5" />{w}</p>)}
-        {loading && !offers ? <div role="status" aria-label="Loading retailer comparison" className="animate-shimmer h-48 rounded-2xl" /> : offers?.locked && offers.offers.length === 0 ? (
-          <LockedPanel hiddenOffers={offers.hidden_offers} hiddenRetailers={offers.hidden_retailers} what="the price comparison" />
-        ) : (
+        {loading && !offers ? <div role="status" aria-label="Loading retailer comparison" className="animate-shimmer h-48 rounded-2xl" /> : (
           <div className="glass rounded-2xl overflow-hidden">
             {offers ? <OffersTable comparison={offers} /> : <p className="p-6 text-sm text-muted-foreground">Offers temporarily unavailable.</p>}
           </div>

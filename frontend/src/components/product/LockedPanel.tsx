@@ -26,15 +26,23 @@ const previews = {
   retailer_comparison: { title: "One product. The full retailer comparison.", text: "Unlock retailer prices, known delivery charges and discounts side by side before you choose where to buy.", items: ["Retailer prices", "Known charges", "Offer rankings"] },
 };
 
-export default function LockedPanel({ hiddenOffers, hiddenRetailers, what = "the full comparison", feature, placement = "product" }: {
+const pickLabels: Record<string, string> = { BEST_OVERALL: "Best overall", CHEAPEST: "Lowest price", SAFEST: "Highest trust score", BEST_VALUE: "Best value", FASTEST: "Fastest delivery" };
+
+export default function LockedPanel({ hiddenOffers, hiddenRetailers, what = "the full comparison", feature, placement = "product", offerPreview }: {
   hiddenOffers?: number; hiddenRetailers?: number; what?: string;
   feature?: keyof typeof previews; placement?: "product" | "search" | "family";
+  offerPreview?: string[];
 }) {
   const pathname = usePathname();
   const ref = useRef<HTMLDivElement>(null);
   const [pricing, setPricing] = useState<string | null>(null);
   const selected = feature ?? (what.includes("history") ? "price_history" : what.includes("decision") ? "recommendations" : "retailer_comparison");
-  const copy = previews[selected];
+  const labels = offerPreview?.filter(category => pickLabels[category]).slice(0, 3).map(category => pickLabels[category]) ?? [];
+  const copy = offerPreview !== undefined ? {
+    ...previews.retailer_comparison,
+    title: labels.length ? "The top picks are reserved for Pro" : "More retailer offers with Pro",
+    text: "Unlock hidden retailers, prices and the reasons behind our rankings. Compare the full picture before you choose.",
+  } : previews[selected];
   const href = `/pricing?source=${selected}&returnTo=${encodeURIComponent(pathname)}`;
   useEffect(() => {
     let live = true;
@@ -60,7 +68,13 @@ export default function LockedPanel({ hiddenOffers, hiddenRetailers, what = "the
       <div className="min-w-0"><p className="text-[11px] font-semibold text-indigo-500 tracking-wider uppercase mb-2 flex items-center gap-1.5"><Crown size={13} /> BuyWise Pro</p><h3 className="text-lg sm:text-xl font-semibold">{copy.title}</h3><p className="text-sm text-muted-foreground leading-relaxed mt-2 max-w-xl">{copy.text}</p></div>
     </div>
     {Boolean(hiddenOffers) && <p className="mt-4 text-sm font-medium">{hiddenOffers} offer{hiddenOffers === 1 ? "" : "s"}{hiddenRetailers ? ` across ${hiddenRetailers} retailer${hiddenRetailers === 1 ? "" : "s"}` : ""} available to unlock.</p>}
-    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 my-5" aria-label="Included Pro insights">{copy.items.map(item => <div key={item} className="rounded-xl border border-border/50 bg-background/70 px-3 py-3 text-xs flex items-center gap-2"><Check size={14} className="text-indigo-500 shrink-0" />{item}<LockKeyhole size={12} className="ml-auto shrink-0 text-muted-foreground" /></div>)}</div>
+    {offerPreview !== undefined ? <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 my-5" aria-label="Locked retailer previews">
+      {(labels.length ? labels : ["Additional retailers"]).map(label => <div key={label} className="relative overflow-hidden rounded-xl border border-indigo-500/20 bg-background/70 p-4">
+        <p className="flex items-center justify-between gap-2 text-xs font-semibold text-indigo-500">{label}<LockKeyhole size={13} /></p>
+        <div aria-hidden="true" className="blur-[5px] select-none pointer-events-none space-y-3 my-5"><div className="h-3 w-3/4 rounded bg-muted-foreground/35" /><div className="h-5 w-1/2 rounded bg-muted-foreground/25" /><div className="h-2 w-2/3 rounded bg-muted-foreground/20" /></div>
+        <p className="text-xs text-muted-foreground">Retailer & price hidden</p>
+      </div>)}
+    </div> : <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 my-5" aria-label="Included Pro insights">{copy.items.map(item => <div key={item} className="rounded-xl border border-border/50 bg-background/70 px-3 py-3 text-xs flex items-center gap-2"><Check size={14} className="text-indigo-500 shrink-0" />{item}<LockKeyhole size={12} className="ml-auto shrink-0 text-muted-foreground" /></div>)}</div>}
     <div className="flex flex-wrap items-center gap-3"><Link href={href} onClick={() => track("pro_upgrade_click", { feature: selected, placement })} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700">Unlock with Pro <ArrowRight size={16} /></Link><p className="text-xs text-muted-foreground">{pricing ?? "See plans and what’s included."}</p></div>
   </div>;
 }
