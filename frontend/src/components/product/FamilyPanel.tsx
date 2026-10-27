@@ -149,7 +149,10 @@ export default function FamilyPanel({ family, compact = false }: { family: Produ
                     <td className="py-3 px-2 hidden lg:table-cell text-xs text-muted-foreground">{o.delivery_days !== null && o.delivery_days !== undefined ? `${o.delivery_days} day${o.delivery_days === 1 ? "" : "s"}` : o.delivery_text || "—"}<div>seen {formatRelativeTime(o.observed_at)}</div></td>
                     <td className="py-3 px-2 text-right whitespace-nowrap">
                       <Link href={`/product/${o.product_id}`} className="text-xs text-muted-foreground hover:text-foreground mr-2">Details</Link>
-                      <a href={o.go_url} target="_blank" rel="noopener noreferrer sponsored" onClick={() => track("retailer_click", { retailer: o.retailer_name, product_id: o.product_id, match_type: "exact_match" })} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-indigo-500/10 text-indigo-500 text-xs font-medium hover:bg-indigo-500/20 transition-colors">Visit <ExternalLink className="w-3 h-3" /></a>
+                      <a href={o.go_url} target="_blank" rel="noopener noreferrer sponsored" onClick={() => track("retailer_clicked", {
+                        product_id: o.product_id, retailer_id: o.retailer_id, offer_id: o.offer_id,
+                        price: o.price, currency: "INR", source: "comparison", is_demo: o.is_demo,
+                      })} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-indigo-500/10 text-indigo-500 text-xs font-medium hover:bg-indigo-500/20 transition-colors">Visit <ExternalLink className="w-3 h-3" /></a>
                     </td>
                   </tr>
                 );

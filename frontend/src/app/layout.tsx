@@ -4,6 +4,7 @@ import Header from "@/components/layout/Header";
 import Footer from "@/components/layout/Footer";
 import DemoBanner from "@/components/layout/DemoBanner";
 import Analytics from "@/components/layout/Analytics";
+import ProductAnalytics from "@/components/layout/ProductAnalytics";
 import ApiStatusBanner from "@/components/layout/ApiStatusBanner";
 import { AuthProvider } from "@/lib/auth";
 import { MetaProvider } from "@/lib/meta";
@@ -28,6 +29,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <a href="#main-content" className="skip-link">Skip to content</a>
         <MetaProvider>
           <AuthProvider>
+            <ProductAnalytics />
             <ApiStatusBanner />
             <DemoBanner />
             <Header />
